@@ -78,7 +78,7 @@ Dependencies flow inward only. No process logic lives in the bindings.
 | Milestone | Status | Adds |
 |---|---|---|
 | **M1: Core Scaffold** | ✅ Complete | State machine, STARTED/EXITED events, single-shot execution |
-| **M2: Timeout & Kill** | Planned | Configurable timeout, graceful termination, kill escalation |
+| **M2: Timeout & Kill** | 🚧 In progress | Configurable timeout, graceful termination, kill escalation |
 | **M3: Process Tree** | Planned | Job Objects (Windows), setsid (Unix) — no orphans guaranteed |
 | **M4: FFI Boundary** | Planned | Stable C-compatible ABI for language bindings |
 | **M5: .NET Binding** | Planned | P/Invoke wrapper, `IAsyncEnumerable<Event>` |

@@ -54,6 +54,7 @@ These invariants are enforced by the state machine and validated by integration 
 4. **No events on spawn failure.** If the OS refuses to spawn the process, neither `Started` nor `Exited` is emitted and `run()` returns an error.
 5. **Exited is terminal.** No event is emitted after `Exited`.
 6. **Exited fires even on timeout.** If the process is killed due to a timeout, `Exited { code: -1 }` is still emitted before `run()` returns `Err(TimedOut)`.
+7. **No descendant process survives `run()` returning.** After `run()` returns (for any reason — natural exit, kill, or timeout), all processes that were part of the spawned process tree are dead.
 
 ---
 
@@ -102,23 +103,41 @@ The 5-second grace window on Unix gives the process a chance to handle SIGTERM a
 
 ---
 
-## 6. Milestone Definitions
+## 6. Process Tree Semantics (M3)
+
+After `run()` returns — regardless of whether the process exited naturally, was killed by a timeout, or was killed explicitly — **no descendant process of the spawned root shall remain alive.**
+
+This guarantee is transparent to callers: no new API is required.
+
+### Platform implementations
+
+| Platform | Mechanism |
+|---|---|
+| Windows | Job Object created at spawn; `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` flag ensures the entire tree dies when the job handle is closed. On timeout, the monitor thread calls `TerminateJobObject` (kills all processes in the job atomically, closing inherited pipes and unblocking `wait`). |
+| Unix | `setsid()` called in the child before exec, making the child the process group leader (pgid == pid). On kill, `killpg(pgid)` broadcasts the signal to the entire group. |
+
+### Why TerminateJobObject is required on Windows (not TerminateProcess)
+
+Grandchildren inherit the root's stdout/stderr pipe handles. `wait_with_output()` waits for EOF on those pipes. If only the root process is killed via `TerminateProcess`, grandchildren keep the pipes open and `wait_with_output()` hangs forever. `TerminateJobObject` kills the entire tree simultaneously, which closes all inherited pipe handles and immediately unblocks the wait.
+
+---
+
+## 7. Milestone Definitions
 
 | Milestone | Adds | Status |
 |---|---|---|
 | M1 | Core scaffold, state machine, STARTED/EXITED events, single-shot execution | ✓ Complete |
-| M2 | Configurable timeout, kill escalation (SIGTERM → SIGKILL / TerminateProcess) | In progress |
-| M3 | Process tree cleanup (Job Objects on Windows, setsid on Unix) | Pending |
+| M2 | Configurable timeout, kill escalation (SIGTERM → SIGKILL / TerminateProcess) | ✓ Complete |
+| M3 | Process tree cleanup (Job Objects on Windows, setsid on Unix) | In progress |
 | M4 | FFI boundary (C-compatible ABI) | Pending |
 | M5 | .NET binding (P/Invoke wrapper) | Pending |
 | M6 | Python binding (ctypes/cffi wrapper) | Pending |
 
 ---
 
-## 7. Behavioral Invariants (design targets for future milestones)
+## 8. Behavioral Invariants (design targets for future milestones)
 
 The following invariants are not yet enforced but the code must be structured to eventually enforce them:
 
-- No child process survives final termination (M3).
 - No event is emitted after the terminal state (already structurally guaranteed by M1 state machine).
 - No duplicate terminal events per task (already structurally guaranteed by M1 state machine).

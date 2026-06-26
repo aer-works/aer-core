@@ -26,8 +26,14 @@ AER is a Rust core library that guarantees consistent process lifecycle behavior
 Requires [pixi](https://pixi.sh). The Rust toolchain is managed automatically — nothing else to install.
 
 ```sh
-# Run the hello example — spawns a process and prints lifecycle events
+# M1 — basic lifecycle: spawn a process and observe events
 pixi run example
+
+# M2 — timeout: see a slow process get killed, then a fast process complete normally
+pixi run example-timeout
+
+# M3 — process tree: a process forks a background child; AER cleans up the whole tree
+pixi run example-tree
 
 # Run all tests
 pixi run test
@@ -99,7 +105,9 @@ Project board: [AER Roadmap](https://github.com/orgs/aer-runtime/projects/1)
 | `pixi run lint` | Clippy with `-D warnings` |
 | `pixi run fmt` | Auto-fix formatting |
 | `pixi run fmt-check` | Check formatting (used in CI) |
-| `pixi run example` | Run the hello example |
+| `pixi run example` | Run the M1 hello example |
+| `pixi run example-timeout` | Run the M2 timeout example |
+| `pixi run example-tree` | Run the M3 process tree example |
 
 ---
 

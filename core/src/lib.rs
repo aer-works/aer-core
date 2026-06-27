@@ -2,6 +2,7 @@ mod event;
 mod machine;
 mod os;
 mod task;
+pub mod ffi;
 
 pub use event::Event;
 pub use machine::State;

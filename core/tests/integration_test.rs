@@ -1,4 +1,8 @@
-use aer_core::{AerError, Event, Task};
+use aer_core::{
+    ffi::{self, AerErrorCode, AerEvent},
+    AerError, Event, Task,
+};
+use std::ffi::{c_void, CStr, CString};
 use std::fs;
 use std::thread;
 use std::time::Duration;
@@ -274,4 +278,163 @@ fn process_tree_is_cleaned_up() {
     );
 
     let _ = fs::remove_file(&pid_file);
+}
+
+// --- M4: FFI Boundary ---
+
+// Closures cannot be extern "C". State is passed through user_data instead.
+unsafe extern "C" fn collect_ffi_events(event: *const AerEvent, user_data: *mut c_void) {
+    let events = &mut *(user_data as *mut Vec<AerEvent>);
+    events.push(*event);
+}
+
+/// Build CStrings from (program, args) and call aer_task_new.
+/// Returns the task pointer; the CStrings must remain alive for the duration of the call.
+fn ffi_new_task(program: &str, args: &[String]) -> *mut ffi::AerTask {
+    let c_program = CString::new(program).unwrap();
+    let c_args: Vec<CString> = args
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
+    let arg_ptrs: Vec<*const i8> = c_args.iter().map(|s| s.as_ptr()).collect();
+    unsafe {
+        ffi::aer_task_new(
+            c_program.as_ptr(),
+            if arg_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                arg_ptrs.as_ptr()
+            },
+            arg_ptrs.len(),
+        )
+    }
+}
+
+#[test]
+fn ffi_null_program_returns_null() {
+    let task = unsafe { ffi::aer_task_new(std::ptr::null(), std::ptr::null(), 0) };
+    assert!(task.is_null(), "expected NULL for null program");
+}
+
+#[test]
+fn ffi_basic_run_emits_events() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::Ok);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].kind, 0, "first event should be Started");
+    assert!(events[0].pid > 0, "started pid should be > 0");
+    assert_eq!(events[1].kind, 1, "second event should be Exited");
+    assert_eq!(events[1].code, 0);
+}
+
+#[test]
+fn ffi_null_callback_is_valid() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let code = unsafe { ffi::aer_task_run(task, None, std::ptr::null_mut()) };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::Ok);
+}
+
+#[test]
+fn ffi_double_run_returns_already_run() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let first = unsafe { ffi::aer_task_run(task, None, std::ptr::null_mut()) };
+    assert_eq!(first, AerErrorCode::Ok);
+
+    let second = unsafe { ffi::aer_task_run(task, None, std::ptr::null_mut()) };
+    assert_eq!(second, AerErrorCode::AlreadyRun);
+
+    unsafe { ffi::aer_task_free(task) };
+}
+
+#[test]
+fn ffi_null_task_run_returns_null_pointer() {
+    let code = unsafe { ffi::aer_task_run(std::ptr::null_mut(), None, std::ptr::null_mut()) };
+    assert_eq!(code, AerErrorCode::NullPointer);
+}
+
+#[test]
+fn ffi_timeout_fires() {
+    let (prog, args) = sleep_cmd(60);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let to_code = unsafe { ffi::aer_task_with_timeout(task, 1000) };
+    assert_eq!(to_code, AerErrorCode::Ok);
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::TimedOut);
+    assert_eq!(events.len(), 2, "expect Started + Exited even on timeout");
+    assert_eq!(events[1].code, -1, "timed-out exit code must be -1");
+}
+
+#[test]
+fn ffi_spawn_failure_sets_error_message() {
+    let task = ffi_new_task("definitely_not_a_real_binary_xyzzy_aer", &[]);
+    assert!(!task.is_null());
+
+    let code = unsafe { ffi::aer_task_run(task, None, std::ptr::null_mut()) };
+    assert_eq!(code, AerErrorCode::SpawnFailed);
+
+    let msg_ptr = ffi::aer_last_error_message();
+    assert!(
+        !msg_ptr.is_null(),
+        "expected error message for spawn failure"
+    );
+    let msg = unsafe { CStr::from_ptr(msg_ptr) }.to_str().unwrap();
+    assert!(!msg.is_empty(), "error message should not be empty");
+
+    unsafe { ffi::aer_task_free(task) };
+}
+
+#[test]
+fn ffi_free_null_is_noop() {
+    unsafe { ffi::aer_task_free(std::ptr::null_mut()) };
+}
+
+#[test]
+fn ffi_last_error_message_is_null_after_success() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let code = unsafe { ffi::aer_task_run(task, None, std::ptr::null_mut()) };
+    assert_eq!(code, AerErrorCode::Ok);
+
+    let msg_ptr = ffi::aer_last_error_message();
+    assert!(
+        msg_ptr.is_null(),
+        "error message should be cleared on success"
+    );
+
+    unsafe { ffi::aer_task_free(task) };
 }

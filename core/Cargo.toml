@@ -6,6 +6,9 @@ license = { workspace = true }
 repository = { workspace = true }
 description = "Cross-language process execution and lifecycle supervision runtime"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

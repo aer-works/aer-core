@@ -1,4 +1,5 @@
 mod event;
+pub mod ffi;
 mod machine;
 mod os;
 mod task;

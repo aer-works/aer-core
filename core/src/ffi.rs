@@ -71,8 +71,16 @@ pub struct AerEvent {
 impl From<Event> for AerEvent {
     fn from(e: Event) -> Self {
         match e {
-            Event::Started { pid } => AerEvent { kind: 0, pid, code: 0 },
-            Event::Exited { code } => AerEvent { kind: 1, pid: 0, code },
+            Event::Started { pid } => AerEvent {
+                kind: 0,
+                pid,
+                code: 0,
+            },
+            Event::Exited { code } => AerEvent {
+                kind: 1,
+                pid: 0,
+                code,
+            },
         }
     }
 }
@@ -130,7 +138,10 @@ pub unsafe extern "C" fn aer_task_new(
         }
 
         let task = Task::new(program_str, arg_strings);
-        Box::into_raw(Box::new(AerTask { inner: Some(task), has_run: false }))
+        Box::into_raw(Box::new(AerTask {
+            inner: Some(task),
+            has_run: false,
+        }))
     }) {
         Ok(ptr) => ptr,
         Err(e) => {
@@ -145,7 +156,10 @@ pub unsafe extern "C" fn aer_task_new(
 /// # Safety
 /// `task` must be a valid pointer returned by aer_task_new that has not been freed.
 #[no_mangle]
-pub unsafe extern "C" fn aer_task_with_timeout(task: *mut AerTask, timeout_ms: u64) -> AerErrorCode {
+pub unsafe extern "C" fn aer_task_with_timeout(
+    task: *mut AerTask,
+    timeout_ms: u64,
+) -> AerErrorCode {
     match std::panic::catch_unwind(AssertUnwindSafe(|| {
         if task.is_null() {
             return AerErrorCode::NullPointer;

@@ -292,12 +292,19 @@ unsafe extern "C" fn collect_ffi_events(event: *const AerEvent, user_data: *mut 
 /// Returns the task pointer; the CStrings must remain alive for the duration of the call.
 fn ffi_new_task(program: &str, args: &[String]) -> *mut ffi::AerTask {
     let c_program = CString::new(program).unwrap();
-    let c_args: Vec<CString> = args.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+    let c_args: Vec<CString> = args
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
     let arg_ptrs: Vec<*const i8> = c_args.iter().map(|s| s.as_ptr()).collect();
     unsafe {
         ffi::aer_task_new(
             c_program.as_ptr(),
-            if arg_ptrs.is_empty() { std::ptr::null() } else { arg_ptrs.as_ptr() },
+            if arg_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                arg_ptrs.as_ptr()
+            },
             arg_ptrs.len(),
         )
     }
@@ -317,7 +324,11 @@ fn ffi_basic_run_emits_events() {
 
     let mut events: Vec<AerEvent> = Vec::new();
     let code = unsafe {
-        ffi::aer_task_run(task, Some(collect_ffi_events), &mut events as *mut _ as *mut c_void)
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
     };
     unsafe { ffi::aer_task_free(task) };
 
@@ -373,7 +384,11 @@ fn ffi_timeout_fires() {
 
     let mut events: Vec<AerEvent> = Vec::new();
     let run_code = unsafe {
-        ffi::aer_task_run(task, Some(collect_ffi_events), &mut events as *mut _ as *mut c_void)
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
     };
     unsafe { ffi::aer_task_free(task) };
 
@@ -391,7 +406,10 @@ fn ffi_spawn_failure_sets_error_message() {
     assert_eq!(code, AerErrorCode::SpawnFailed);
 
     let msg_ptr = ffi::aer_last_error_message();
-    assert!(!msg_ptr.is_null(), "expected error message for spawn failure");
+    assert!(
+        !msg_ptr.is_null(),
+        "expected error message for spawn failure"
+    );
     let msg = unsafe { CStr::from_ptr(msg_ptr) }.to_str().unwrap();
     assert!(!msg.is_empty(), "error message should not be empty");
 
@@ -413,7 +431,10 @@ fn ffi_last_error_message_is_null_after_success() {
     assert_eq!(code, AerErrorCode::Ok);
 
     let msg_ptr = ffi::aer_last_error_message();
-    assert!(msg_ptr.is_null(), "error message should be cleared on success");
+    assert!(
+        msg_ptr.is_null(),
+        "error message should be cleared on success"
+    );
 
     unsafe { ffi::aer_task_free(task) };
 }

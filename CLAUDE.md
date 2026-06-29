@@ -7,28 +7,28 @@ AER is a cross-language process supervision engine. The Rust crate `aer-core` is
 ## Repo structure
 
 ```
-aer/
-├── core/          aer-core crate — the only place with process logic
-│   ├── src/
-│   │   ├── lib.rs        public API surface, AerError definition
-│   │   ├── event.rs      Event enum (Started, Exited, StdoutChunk, StderrChunk)
-│   │   ├── machine.rs    StateMachine (Created → Running → Exited)
-│   │   ├── task.rs       Task::run() / run_with_cancel() — drives the machine and emits events
-│   │   ├── ffi.rs        C-compatible ABI (M4)
-│   │   └── os/           platform abstraction (windows.rs / unix.rs)
-│   ├── include/
-│   │   └── aer.h         C header (stable ABI contract)
-│   └── tests/
-│       └── integration_test.rs
-├── dotnet/        .NET binding — P/Invoke wrapper over core/include/aer.h (M5)
-├── spec/          behavioral specs (source of truth, not code)
+aer-core/
+├── src/
+│   ├── lib.rs        public API surface, AerError definition
+│   ├── event.rs      Event enum (Started, Exited, StdoutChunk, StderrChunk)
+│   ├── machine.rs    StateMachine (Created → Running → Exited)
+│   ├── task.rs       Task::run() / run_with_cancel() — drives the machine and emits events
+│   ├── ffi.rs        C-compatible ABI (M4)
+│   └── os/           platform abstraction (windows.rs / unix.rs)
+├── include/
+│   └── aer.h         C header (stable ABI contract)
+├── tests/
+│   └── integration_test.rs
+├── bindings/
+│   └── dotnet/       .NET binding — P/Invoke wrapper over core/include/aer.h (M5)
+├── spec/             behavioral specs (source of truth, not code)
 │   ├── AER Overview.md
 │   ├── aer-core-behavioral-spec-v1.1.md   ← current
 │   └── aer-core-behavioral-spec-v1.0.md   ← archived, superseded by v1.1
 ├── .github/workflows/
 │   ├── ci.yml             lint + fmt + test on win + linux
 │   └── release-please.yml versioning and changelog
-└── pixi.toml      task runner and toolchain manager
+└── pixi.toml         task runner and toolchain manager
 ```
 
 ---
@@ -39,11 +39,16 @@ Always use `pixi run <task>`. Never invoke `cargo` directly in CI.
 
 | Task | Command |
 |---|---|
-| `build` | `cargo build --workspace` |
-| `test` | `cargo test --workspace` |
-| `lint` | `cargo clippy --workspace --all-targets -- -D warnings` |
+| `build` | `cargo build` |
+| `test` | `cargo test` |
+| `lint` | `cargo clippy --all-targets -- -D warnings` |
 | `fmt` | `cargo fmt --all` (fix) |
 | `fmt-check` | `cargo fmt --all -- --check` (CI) |
+| `example` | `cargo run --example hello` (M1) |
+| `example-timeout` | `cargo run --example timeout` (M2) |
+| `example-tree` | `cargo run --example tree` (M3) |
+| `example-capture` | `cargo run --example capture` (M4) |
+| `example-cancel` | `cargo run --example cancel` (M4) |
 
 Pixi manages the Rust toolchain — no separate `rustup` install needed.
 
@@ -84,7 +89,7 @@ Do not add any of these until the milestone that introduces them:
 
 ## Testing conventions
 
-- All tests live in `core/tests/integration_test.rs` (integration) or inline in `machine.rs` (state machine unit tests only).
+- All tests live in `tests/integration_test.rs` (integration) or inline in `src/machine.rs` (state machine unit tests only).
 - Integration tests must be platform-agnostic: use the `#[cfg(target_os = "windows")]` helper functions in the test file to select commands, never hardcode shell paths.
 - Exit codes in tests: use 0–127 only (cross-platform safe range).
 

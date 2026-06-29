@@ -1,6 +1,6 @@
-# aer — Agent Execution Runtime
+# AER Core
 
-[![CI](https://github.com/aer-runtime/aer/actions/workflows/ci.yml/badge.svg)](https://github.com/aer-runtime/aer/actions/workflows/ci.yml)
+[![CI](https://github.com/aer-works/aer-core/actions/workflows/ci.yml/badge.svg)](https://github.com/aer-works/aer-core/actions/workflows/ci.yml)
 
 Cross-language process execution and lifecycle supervision runtime with deterministic cleanup semantics.
 
@@ -34,6 +34,10 @@ pixi run example-timeout
 
 # M3 — process tree: a process forks a background child; AER cleans up the whole tree
 pixi run example-tree
+
+# M4 — IO capture and explicit cancellation examples
+pixi run example-capture
+pixi run example-cancel
 
 # Run all tests
 pixi run test
@@ -70,7 +74,7 @@ Done.
 └─────────────────────────────────┘
          ↑ FFI boundary (M4)
 ┌────────┴────────┐  ┌────────────┐
-│   aer-dotnet    │  │ aer-python │  ← thin translation layers, M5/M6
+│bindings/dotnet/ │  │ aer-python │  ← thin translation layers, M5/M6
 │   (P/Invoke)    │  │ (ctypes)   │
 └─────────────────┘  └────────────┘
 ```
@@ -86,13 +90,13 @@ Dependencies flow inward only. No process logic lives in the bindings.
 | **M1: Core Scaffold** | ✅ Complete | State machine, STARTED/EXITED events, single-shot execution |
 | **M2: Timeout & Kill** | ✅ Complete | Configurable timeout, graceful termination, kill escalation |
 | **M3: Process Tree** | ✅ Complete | Job Objects (Windows), setsid (Unix) — no orphans guaranteed |
-| **M4: FFI Boundary** | Planned | Stable C-compatible ABI for language bindings |
+| **M4: FFI Boundary** | ✅ Complete | Stable C-compatible ABI for language bindings |
 | **M5: .NET Binding** | Planned | P/Invoke wrapper, `IAsyncEnumerable<Event>` |
-| **M6: Python Binding** | Planned | ctypes/cffi wrapper, asyncio context manager |
+| **M6: Python Binding** | Deferred | ctypes/cffi wrapper, asyncio context manager |
 
-Full behavioral specification: [`spec/v1.0/behavioral-spec.md`](spec/v1.0/behavioral-spec.md)
+Full behavioral specification: [`spec/aer-core-behavioral-spec-v1.1.md`](spec/aer-core-behavioral-spec-v1.1.md)
 
-Project board: [AER Roadmap](https://github.com/orgs/aer-runtime/projects/1)
+Project board: [AER Roadmap](https://github.com/orgs/aer-works/projects/1)
 
 ---
 
@@ -108,6 +112,8 @@ Project board: [AER Roadmap](https://github.com/orgs/aer-runtime/projects/1)
 | `pixi run example` | Run the M1 hello example |
 | `pixi run example-timeout` | Run the M2 timeout example |
 | `pixi run example-tree` | Run the M3 process tree example |
+| `pixi run example-capture` | Run the M4 stdout/stderr capture example |
+| `pixi run example-cancel` | Run the M4 manual cancellation example |
 
 ---
 

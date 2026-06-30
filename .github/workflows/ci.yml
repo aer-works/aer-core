@@ -20,6 +20,10 @@ jobs:
         with:
           cache: true
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
       - name: Check formatting
         run: pixi run fmt-check
 
@@ -28,3 +32,12 @@ jobs:
 
       - name: Test
         run: pixi run test
+
+      - name: .NET check formatting
+        run: pixi run dotnet-fmt-check
+
+      - name: .NET lint
+        run: pixi run dotnet-lint
+
+      - name: .NET test
+        run: pixi run dotnet-test

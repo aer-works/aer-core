@@ -3,3 +3,8 @@
 * text=auto eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.editorconfig text eol=lf
+*.slnx text eol=lf

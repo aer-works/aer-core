@@ -38,7 +38,9 @@ jobs:
       - name: .NET test
         run: pixi run dotnet-test
 
-      - name: Stop .NET processes before cleanup
+      - name: Shut down .NET build servers before cleanup
         if: always() && runner.os == 'Windows'
         shell: pwsh
-        run: Get-Process dotnet -ErrorAction SilentlyContinue | Stop-Process -Force
+        run: |
+          dotnet build-server shutdown
+          Get-Process VBCSCompiler -ErrorAction SilentlyContinue | Stop-Process -Force

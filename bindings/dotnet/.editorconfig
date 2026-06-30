@@ -10,6 +10,8 @@ insert_final_newline = true
 dotnet_analyzer_diagnostic.category-Style.severity = warning
 # Already using file-scoped namespaces everywhere.
 dotnet_diagnostic.IDE0160.severity = none
+# Expression-bodied members are valid style and are used intentionally.
+dotnet_diagnostic.IDE0022.severity = none
 
 # ── NativeMethods.cs ─────────────────────────────────────────────────────────
 [Aer.Core/NativeMethods.cs]

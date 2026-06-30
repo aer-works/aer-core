@@ -40,7 +40,7 @@ internal static partial class NativeMethods
     public static extern AerCancelHandle aer_task_make_cancel_handle(nint task);
 
     // DllImport: LibraryImport does not support delegate marshaling.
-    // Phase 3 will decide between a GC-pinned delegate and a native function pointer.
+    // Callers should wrap this via CallbackBridge, which GC-pins the delegate and marshals the event.
     /// <summary>
     /// Spawn the process and block until it exits. <paramref name="callback"/> may be <see langword="null"/>.
     /// A handle may only be run once; a second call returns <see cref="AerErrorCode.AlreadyRun"/>.

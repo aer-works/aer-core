@@ -7,6 +7,10 @@ end_of_line = crlf
 charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = true
+# Promote all IDE style diagnostics to warnings so pixi run dotnet-lint matches the IDE
+dotnet_analyzer_diagnostic.category-Style.severity = warning
+# Already using file-scoped namespaces everywhere.
+dotnet_diagnostic.IDE0160.severity = none
 
 # ── NativeMethods.cs ─────────────────────────────────────────────────────────
 [Aer.Core/NativeMethods.cs]
@@ -23,3 +27,5 @@ dotnet_diagnostic.CA2101.severity = none
 [Aer.Core.Tests/*.cs]
 # xUnit naming convention uses underscores (Method_Behavior_Condition).
 dotnet_diagnostic.CA1707.severity = none
+# Test classes and methods do not need XML doc comments.
+dotnet_diagnostic.CS1591.severity = none

@@ -1,5 +1,3 @@
-using Aer.Core;
-
 namespace Aer.Core.Tests;
 
 public class SafeHandleTests

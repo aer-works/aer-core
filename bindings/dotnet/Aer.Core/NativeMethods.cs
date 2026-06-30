@@ -4,7 +4,7 @@ namespace Aer.Core;
 
 /// <summary>
 /// Raw P/Invoke declarations matching the stable C ABI in <c>aer.h</c>.
-/// All signatures are unsafe-free; higher-level wrappers live in <see cref="AerTask"/>.
+/// All signatures are unsafe-free; higher-level wrappers will live in <c>AerTask</c> (Issue #62).
 /// </summary>
 internal static partial class NativeMethods
 {

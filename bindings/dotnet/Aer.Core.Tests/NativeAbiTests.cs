@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using Aer.Core;
 
 namespace Aer.Core.Tests;
 

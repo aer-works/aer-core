@@ -21,6 +21,6 @@ example-cancel  = "cargo run --example cancel"
 
 dotnet-build     = { cmd = "dotnet build", cwd = "bindings/dotnet" }
 dotnet-test      = { cmd = "dotnet test",  cwd = "bindings/dotnet", depends-on = ["build", "dotnet-build"] }
-dotnet-lint      = { cmd = "dotnet build -warnaserror", cwd = "bindings/dotnet" }
+dotnet-lint      = { cmd = "dotnet build -warnaserror --no-incremental", cwd = "bindings/dotnet" }
 dotnet-fmt       = { cmd = "dotnet format", cwd = "bindings/dotnet" }
 dotnet-fmt-check = { cmd = "dotnet format --verify-no-changes", cwd = "bindings/dotnet" }

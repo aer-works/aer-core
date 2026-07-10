@@ -121,16 +121,34 @@ impl OsProcess for UnixProcess {
     fn kill_escalating(kill: KillHandle, grace: Duration) -> Result<(), AerError> {
         // killpg broadcasts to the entire process group. After setsid, the child's
         // PGID == its PID, so kill.pgid == the pid passed to spawn.
+        //
+        // Pre-setsid race: setsid() runs in the child *after* fork (pre_exec), so
+        // a kill arriving in the fork-to-setsid window finds no process group yet
+        // and killpg fails with ESRCH even though the child is alive. On ESRCH we
+        // therefore fall back to signaling the pid directly (on Unix the pgid
+        // value IS the root pid). A pre-exec child cannot have spawned
+        // grandchildren, so the direct signal is complete coverage; post-setsid,
+        // killpg succeeds and the fallback never fires. The fallback's own result
+        // is ignored: ESRCH there means the process is genuinely gone.
+        //
         // SIGTERM: polite request; gives the group a chance to clean up.
         if unsafe { libc::killpg(kill.pgid as i32, libc::SIGTERM) } != 0 {
-            return Err(AerError::KillFailed(io::Error::last_os_error()));
+            let e = io::Error::last_os_error();
+            if e.raw_os_error() == Some(libc::ESRCH) {
+                let _ = unsafe { libc::kill(kill.pgid as i32, libc::SIGTERM) };
+            } else {
+                return Err(AerError::KillFailed(e));
+            }
         }
         thread::sleep(grace);
-        // SIGKILL: cannot be caught or ignored. ESRCH means the group is already
-        // gone (responded to SIGTERM) — that is not an error.
+        // SIGKILL: cannot be caught or ignored. ESRCH here usually means the group
+        // is already gone (responded to SIGTERM) — not an error — but it can also
+        // be the pre-setsid window again, so send the direct-pid fallback too.
         if unsafe { libc::killpg(kill.pgid as i32, libc::SIGKILL) } != 0 {
             let e = io::Error::last_os_error();
-            if e.raw_os_error() != Some(libc::ESRCH) {
+            if e.raw_os_error() == Some(libc::ESRCH) {
+                let _ = unsafe { libc::kill(kill.pgid as i32, libc::SIGKILL) };
+            } else {
                 return Err(AerError::KillFailed(e));
             }
         }
@@ -143,6 +161,17 @@ impl OsProcess for UnixProcess {
         // (success, or a permission-style error) is treated as "still alive"
         // so callers fail toward killing rather than orphaning.
         if unsafe { libc::killpg(kill.pgid as i32, 0) } == 0 {
+            return true;
+        }
+        if io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return true;
+        }
+        // ESRCH on the group can also mean the child is in the fork-to-setsid
+        // window where the group does not exist yet but the process does (see
+        // kill_escalating). Probe the pid directly before concluding the tree is
+        // dead — otherwise a cancel() landing in that window skips its kill
+        // entirely and orphans the child.
+        if unsafe { libc::kill(kill.pgid as i32, 0) } == 0 {
             return true;
         }
         io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)

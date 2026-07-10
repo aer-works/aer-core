@@ -145,6 +145,15 @@ This guarantee is transparent to callers: no new API is required.
 | Windows  | Job Object created at spawn; `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` flag ensures the entire tree dies when the job handle is closed. On timeout or cancellation, the monitor calls `TerminateJobObject` (kills all processes in the job atomically, closing inherited pipes and unblocking `wait`). |
 | Unix     | `setsid()` called in the child before exec, making the child the process group leader (pgid == pid). On kill, `killpg(pgid)` broadcasts the signal to the entire group.                                                                                                                           |
 
+### Guarantee strength differs by platform
+
+The two mechanisms are not equally strong, and the difference is part of the behavioral contract:
+
+- **Windows — hard guarantee.** Job Object membership is kernel-enforced and inherited: a descendant cannot leave the job, and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` / `TerminateJobObject` reach every member regardless of how it was created.
+- **Unix — best-effort.** Process-group membership is voluntary: a descendant that itself calls `setsid()` (or `setpgid()`) leaves the group and is invisible to `killpg`. Narrow PID/pgid-reuse races also exist between exit and signal delivery. In practice the mechanism is reliable for well-behaved children (shells, compilers, CLIs), but a process that deliberately creates its own session escapes it.
+
+If the hard guarantee ever becomes a requirement on Unix, the known upgrade paths are cgroups (Linux) or pidfd-based descendant tracking; neither is scoped into any current milestone. Callers and downstream specs (AER Flow) must not assume more than best-effort cleanup on Unix.
+
 ### Why TerminateJobObject is required on Windows (not TerminateProcess)
 
 Grandchildren inherit the root's stdout/stderr pipe handles. `wait_with_output()` waits for EOF on those pipes. If only the root process is killed via `TerminateProcess`, grandchildren keep the pipes open and `wait_with_output()` hangs forever. `TerminateJobObject` kills the entire tree simultaneously, which closes all inherited pipe handles and immediately unblocks the wait.
@@ -174,7 +183,7 @@ This capability is scoped into M4, alongside the Observation Tier (§2.2/§4) an
 | M1        | Core scaffold, state machine, STARTED/EXITED events, single-shot execution                                                                                                                                                      | ✓ Complete                                                                                                                      |
 | M2        | Configurable timeout, kill escalation (SIGTERM → SIGKILL / TerminateProcess)                                                                                                                                                    | ✓ Complete                                                                                                                      |
 | M3        | Process tree cleanup (Job Objects on Windows, setsid on Unix)                                                                                                                                                                   | ✓ Complete                                                                                                                      |
-| M4        | Observation Tier (`CaptureOutput`, `StdoutChunk`/`StderrChunk` events), on-demand Cancellation (§7), **and** the FFI boundary (C-compatible ABI) exposing the full event set and the cancellation mechanism across the boundary | Pending                                                                                                                         |
+| M4        | Observation Tier (`CaptureOutput`, `StdoutChunk`/`StderrChunk` events), on-demand Cancellation (§7), **and** the FFI boundary (C-compatible ABI) exposing the full event set and the cancellation mechanism across the boundary | ✓ Complete                                                                                                                      |
 | M5        | .NET binding (P/Invoke wrapper) over the M4 ABI, including stream event marshalling and a cancellation handle/API. First real consumer: AER Flow.                                                                               | Pending                                                                                                                         |
 | M6        | Python binding (ctypes/cffi wrapper)                                                                                                                                                                                            | **Deferred.** No current consumer — AER Flow is C#/.NET. Re-scope only if a concrete Python-side worker or adapter requires it. |
 

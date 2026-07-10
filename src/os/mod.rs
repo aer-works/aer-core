@@ -52,6 +52,14 @@ pub(crate) trait OsProcess {
     /// Kills the entire process tree. On Unix: SIGTERM → sleep(grace) → SIGKILL
     /// to the process group. On Windows: TerminateJobObject immediately.
     fn kill_escalating(kill: KillHandle, grace: Duration) -> Result<(), AerError>;
+    /// Probes whether any process in the tree is still alive. Used by task.rs
+    /// to decide whether a cancel/timeout kill would actually be acting on a
+    /// live process, or is arriving after the process already exited naturally.
+    /// A grandchild that is still alive after the root has exited counts as
+    /// "alive" — the whole tree, not just the root, must be gone.
+    /// On query failure, implementations fail toward "alive" (killing an
+    /// already-dead tree is harmless; skipping a kill on a live one is not).
+    fn tree_alive(kill: &KillHandle) -> bool;
 }
 
 #[cfg(not(target_os = "windows"))]

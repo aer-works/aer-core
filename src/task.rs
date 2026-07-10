@@ -48,13 +48,30 @@ impl CancelHandle {
     /// using the same escalation as a timeout kill. If the process has not started
     /// yet or has already exited, this is a no-op (the exit reason is unaffected).
     ///
+    /// Note on the natural-exit race: the kill handle stays wired up until
+    /// `run_impl` clears it just after `wait()` returns, so `cancel()` can still
+    /// observe `Some(kill)` for a process that has, in fact, already exited. A
+    /// `tree_alive` probe immediately before the kill narrows this window to the
+    /// probe-then-kill gap itself — a process that dies in the instant between
+    /// the probe returning "alive" and the kill actually landing is still
+    /// (harmlessly) reported as cancelled, because kill_escalating on an
+    /// already-exited tree is a no-op. What this eliminates is the systematic
+    /// misreport where cancel() unconditionally fires on a long-dead process;
+    /// it does not — cannot — close the microsecond-scale TOCTOU race inherent
+    /// in probe-then-kill.
+    ///
     /// Thread-safe. Only the first call has effect; subsequent calls are no-ops.
     pub fn cancel(&self) {
         if !self.cancelled.swap(true, Ordering::SeqCst) {
             if let Ok(guard) = self.kill.lock() {
                 if let Some(kill) = guard.as_ref() {
-                    self.kill_fired.store(true, Ordering::SeqCst);
-                    let _ = PlatformProcess::kill_escalating(kill.clone(), KILL_GRACE);
+                    if PlatformProcess::tree_alive(kill) {
+                        self.kill_fired.store(true, Ordering::SeqCst);
+                        let _ = PlatformProcess::kill_escalating(kill.clone(), KILL_GRACE);
+                    }
+                    // else: the tree already exited naturally (probed just now).
+                    // kill_fired stays false so run_impl reports NaturalExit with
+                    // the real exit code instead of a spurious CancelRequested.
                 }
                 // kill is None: called before spawn or after wait() returned.
                 // kill_fired stays false; run_impl will not report CancelRequested.
@@ -135,10 +152,14 @@ impl Task {
 
         // Wire the cancel handle to the live kill handle so cancel() can reach the process.
         // Also handle the case where cancel() was called before spawn completed:
-        // in that case the flag is set but kill_fired is false; do the kill now.
+        // in that case the flag is set but kill_fired is false; do the kill now
+        // (unless the process already raced to natural exit — same probe as cancel()).
         if let Some(ch) = cancel {
             *ch.kill.lock().unwrap() = Some(handle.kill.clone());
-            if ch.cancelled.load(Ordering::SeqCst) && !ch.kill_fired.load(Ordering::SeqCst) {
+            if ch.cancelled.load(Ordering::SeqCst)
+                && !ch.kill_fired.load(Ordering::SeqCst)
+                && PlatformProcess::tree_alive(&handle.kill)
+            {
                 ch.kill_fired.store(true, Ordering::SeqCst);
                 let _ = PlatformProcess::kill_escalating(handle.kill.clone(), KILL_GRACE);
             }
@@ -153,8 +174,15 @@ impl Task {
             let timed_out_clone = Arc::clone(&timed_out);
             thread::spawn(move || {
                 if let Err(mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout) {
-                    timed_out_clone.store(true, Ordering::SeqCst);
-                    let _ = PlatformProcess::kill_escalating(kill_for_monitor, KILL_GRACE);
+                    // Probe before killing: the deadline can fire in the same race
+                    // window as cancel() — the process may have exited naturally a
+                    // moment earlier. See CancelHandle::cancel()'s doc comment for
+                    // the full TOCTOU discussion; the same residual microsecond-scale
+                    // race applies here.
+                    if PlatformProcess::tree_alive(&kill_for_monitor) {
+                        timed_out_clone.store(true, Ordering::SeqCst);
+                        let _ = PlatformProcess::kill_escalating(kill_for_monitor, KILL_GRACE);
+                    }
                 }
             });
         }

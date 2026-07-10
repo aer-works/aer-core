@@ -926,8 +926,10 @@ fn cancel_kills_running_process() {
 
 #[test]
 fn cancel_after_exit_is_noop() {
-    // cancel() called after the process has already exited must not affect the
-    // exit reason — the process should be reported as NaturalExit.
+    // Regression test for #73: cancel() called after the process has already
+    // exited must not affect the exit reason or discard the real exit code —
+    // the process should be reported as NaturalExit with code 0, and calling
+    // cancel() after run_with_cancel() has already returned must change nothing.
     let (prog, args) = exit_cmd(0);
     let task = Task::new(prog, args);
     let cancel = CancelHandle::new();
@@ -935,16 +937,28 @@ fn cancel_after_exit_is_noop() {
     let mut events = Vec::new();
     let result = task.run_with_cancel(|e| events.push(e), &cancel);
 
-    // Process already exited; cancel now is a no-op
-    cancel.cancel();
-
     assert!(result.is_ok(), "expected Ok, got {:?}", result);
     assert!(
         matches!(
             events.last(),
             Some(Event::Exited {
                 reason: ExitReason::NaturalExit,
-                ..
+                code: 0,
+            })
+        ),
+        "expected NaturalExit with code 0, got {:?}",
+        events.last()
+    );
+
+    // Process already exited (run_with_cancel returned); cancel now is a no-op
+    // and must not retroactively change the reported outcome.
+    cancel.cancel();
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Exited {
+                reason: ExitReason::NaturalExit,
+                code: 0,
             })
         ),
         "cancel after exit must not change reason, got {:?}",

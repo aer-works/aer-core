@@ -10,9 +10,10 @@ use std::thread;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 /// RAII wrapper for a Windows Job Object handle.
@@ -175,5 +176,25 @@ impl OsProcess for WindowsProcess {
             return Err(AerError::KillFailed(io::Error::last_os_error()));
         }
         Ok(())
+    }
+
+    fn tree_alive(kill: &KillHandle) -> bool {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut returned: u32 = 0;
+        let ok = unsafe {
+            QueryInformationJobObject(
+                kill.job.0,
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut _ as *mut c_void,
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                &mut returned,
+            )
+        };
+        if ok == 0 {
+            // Query failed: fail toward "alive" so callers still kill rather
+            // than risk orphaning a live tree.
+            return true;
+        }
+        info.ActiveProcesses > 0
     }
 }

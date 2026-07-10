@@ -136,4 +136,15 @@ impl OsProcess for UnixProcess {
         }
         Ok(())
     }
+
+    fn tree_alive(kill: &KillHandle) -> bool {
+        // Signal 0 sends nothing but still performs existence/permission checks.
+        // ESRCH means no process in the group exists; any other outcome
+        // (success, or a permission-style error) is treated as "still alive"
+        // so callers fail toward killing rather than orphaning.
+        if unsafe { libc::killpg(kill.pgid as i32, 0) } == 0 {
+            return true;
+        }
+        io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
 }

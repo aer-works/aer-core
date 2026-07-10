@@ -24,6 +24,7 @@ typedef enum {
     AER_ERR_ALREADY_RUN = 7,          /* aer_task_run called more than once */
     AER_ERR_PANIC = 8,                /* unexpected internal panic (see aer_last_error_message) */
     AER_ERR_CANCELLED = 9,            /* process was killed by an explicit cancel request */
+    AER_ERR_INVALID_ARGUMENT = 10,    /* string argument failed validation (bad UTF-8, empty key, key contains '=') */
 } AerErrorCode;
 
 /* -------------------------------------------------------------------------
@@ -128,6 +129,41 @@ AerErrorCode aer_task_with_timeout(AerTask *task, uint64_t timeout_ms);
  * for the duration of the callback; copy the bytes if needed after return.
  */
 AerErrorCode aer_task_with_capture_output(AerTask *task, bool capture);
+
+/**
+ * Set an environment variable for the child process.
+ *
+ * Must be called before aer_task_run. Repeatable: calling this again with
+ * the same `key` overrides the previously set value. Variables set this way
+ * are always visible to the child, regardless of aer_task_set_clear_env.
+ *
+ * `key` and `value` — null-terminated, valid UTF-8, no embedded NUL bytes.
+ * Returns AER_ERR_INVALID_ARGUMENT if either is not valid UTF-8, if `key`
+ * is empty, or if `key` contains '='.
+ */
+AerErrorCode aer_task_set_env(AerTask *task, const char *key, const char *value);
+
+/**
+ * Set whether the child process inherits the parent's environment.
+ *
+ * Must be called before aer_task_run. When `clear` is true, the child
+ * inherits nothing from the parent environment — only variables set via
+ * aer_task_set_env are present. Default is false (inherit the full parent
+ * environment).
+ */
+AerErrorCode aer_task_set_clear_env(AerTask *task, bool clear);
+
+/**
+ * Set the child process's working directory.
+ *
+ * Must be called before aer_task_run. If the path does not exist or is not
+ * a directory, this surfaces at aer_task_run time as AER_ERR_SPAWN_FAILED —
+ * no events are emitted for that run.
+ *
+ * `path` — null-terminated, valid UTF-8, no embedded NUL bytes.
+ * Returns AER_ERR_INVALID_ARGUMENT if `path` is not valid UTF-8 or is empty.
+ */
+AerErrorCode aer_task_set_cwd(AerTask *task, const char *path);
 
 /**
  * Create a cancellation handle for this task.

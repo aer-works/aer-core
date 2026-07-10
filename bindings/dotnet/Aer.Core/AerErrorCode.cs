@@ -25,4 +25,6 @@ public enum AerErrorCode : int
     Panic = 8,
     /// <summary>The task was cancelled via its cancel handle.</summary>
     Cancelled = 9,
+    /// <summary>A string argument failed validation (invalid UTF-8, empty key, or a key containing '=').</summary>
+    InvalidArgument = 10,
 }

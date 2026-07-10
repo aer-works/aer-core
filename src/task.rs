@@ -1,10 +1,11 @@
 use crate::{
     event::{Event, ExitReason},
     machine::{State, StateMachine},
-    os::{ChunkMsg, KillHandle, OsProcess, OutputSinks, PlatformProcess},
+    os::{ChunkMsg, KillHandle, OsProcess, OutputSinks, PlatformProcess, SpawnOptions},
     AerError,
 };
 use std::io;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -129,6 +130,9 @@ pub struct Task {
     args: Vec<String>,
     timeout: Option<Duration>,
     capture_output: bool,
+    env: Vec<(String, String)>,
+    clear_env: bool,
+    cwd: Option<PathBuf>,
 }
 
 impl Task {
@@ -138,6 +142,9 @@ impl Task {
             args: args.into_iter().map(Into::into).collect(),
             timeout: None,
             capture_output: false,
+            env: Vec::new(),
+            clear_env: false,
+            cwd: None,
         }
     }
 
@@ -152,6 +159,40 @@ impl Task {
     /// `StderrChunk` events are emitted between `Started` and `Exited`.
     pub fn with_capture_output(mut self, capture: bool) -> Self {
         self.capture_output = capture;
+        self
+    }
+
+    /// Sets an environment variable for the child process. Repeatable — if
+    /// called more than once with the same key, the last call before `run()`
+    /// wins (later calls override earlier ones for that key). Variables set
+    /// this way are always visible to the child, regardless of
+    /// `with_clear_env`.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let key = key.into();
+        let value = value.into();
+        match self.env.iter_mut().find(|(k, _)| *k == key) {
+            Some(entry) => entry.1 = value,
+            None => self.env.push((key, value)),
+        }
+        self
+    }
+
+    /// When `true`, the child inherits nothing from the parent process's
+    /// environment — only variables set via `with_env` are present. Default
+    /// `false`, in which case the child inherits the full parent environment
+    /// (unchanged behavior from earlier milestones).
+    pub fn with_clear_env(mut self, clear: bool) -> Self {
+        self.clear_env = clear;
+        self
+    }
+
+    /// Sets the child process's working directory. If the path does not exist
+    /// or is not a directory, this surfaces at spawn time the same way any
+    /// other OS-level spawn rejection does: `run()` returns
+    /// `Err(AerError::SpawnFailed)` and no events are emitted (std's
+    /// `Command::current_dir` behavior).
+    pub fn with_cwd(mut self, path: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(path.into());
         self
     }
 
@@ -182,7 +223,12 @@ impl Task {
         let mut machine = StateMachine::new();
 
         let str_args: Vec<&str> = self.args.iter().map(String::as_str).collect();
-        let handle = PlatformProcess::spawn(&self.program, &str_args)?;
+        let spawn_options = SpawnOptions {
+            env: &self.env,
+            clear_env: self.clear_env,
+            cwd: self.cwd.as_deref(),
+        };
+        let handle = PlatformProcess::spawn(&self.program, &str_args, spawn_options)?;
 
         // Armed immediately after spawn so any early return or panic below —
         // including one raised by the caller's `on_event` callback — kills the

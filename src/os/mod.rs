@@ -1,4 +1,5 @@
 use crate::AerError;
+use std::path::Path;
 use std::process::Child;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -40,10 +41,27 @@ pub(crate) struct OutputSinks {
     pub(crate) stderr: Option<mpsc::Sender<ChunkMsg>>,
 }
 
+/// Pre-spawn configuration for a child process's environment and working
+/// directory. Applied identically on both platforms via std's `Command`
+/// (`env` / `env_clear` / `current_dir`) — no OS-specific logic needed.
+pub(crate) struct SpawnOptions<'a> {
+    /// Environment variables to set on the child. Applied in order, so a
+    /// later entry for the same key overrides an earlier one (mirrors
+    /// `Task::with_env`'s override-on-repeat documented behavior).
+    pub(crate) env: &'a [(String, String)],
+    /// When true, the child does not inherit the parent's environment at
+    /// all — only `env` entries above are present.
+    pub(crate) clear_env: bool,
+    /// Working directory for the child. `None` means inherit the parent's
+    /// current working directory (the default, unchanged behavior).
+    pub(crate) cwd: Option<&'a Path>,
+}
+
 /// Platform abstraction for spawning, waiting on, and killing a process.
 /// Implementations must not leak OS-specific behavior into callers.
 pub(crate) trait OsProcess {
-    fn spawn(program: &str, args: &[&str]) -> Result<OsHandle, AerError>;
+    fn spawn(program: &str, args: &[&str], options: SpawnOptions<'_>)
+        -> Result<OsHandle, AerError>;
     /// Blocks until the process exits. Returns the exit code.
     /// Returns -1 if the OS provides no exit code (e.g. signal-killed on Unix).
     /// When `sinks` contains `Some` senders, drain threads forward captured bytes

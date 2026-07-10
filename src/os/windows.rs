@@ -1,4 +1,4 @@
-use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks};
+use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks, SpawnOptions};
 use crate::AerError;
 use std::ffi::c_void;
 use std::io::{self, Read};
@@ -37,7 +37,11 @@ impl Drop for JobHandle {
 pub(crate) struct WindowsProcess;
 
 impl OsProcess for WindowsProcess {
-    fn spawn(program: &str, args: &[&str]) -> Result<OsHandle, AerError> {
+    fn spawn(
+        program: &str,
+        args: &[&str],
+        options: SpawnOptions<'_>,
+    ) -> Result<OsHandle, AerError> {
         // Create the job object first and wrap it immediately so all subsequent
         // error paths clean up via Drop — no manual CloseHandle calls needed.
         let raw_job = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
@@ -62,15 +66,28 @@ impl OsProcess for WindowsProcess {
             return Err(AerError::SpawnFailed(io::Error::last_os_error()));
         }
 
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             // Pipes are required even though output is not surfaced to callers.
             // Without draining, a child writing beyond the OS pipe buffer deadlocks
             // wait_with_output(). Never use Stdio::inherit here.
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(AerError::SpawnFailed)?;
+            .stderr(Stdio::piped());
+
+        // env_clear (if requested) must run before applying with_env entries,
+        // otherwise it would wipe out the very vars we just set.
+        if options.clear_env {
+            command.env_clear();
+        }
+        for (key, value) in options.env {
+            command.env(key, value);
+        }
+        if let Some(cwd) = options.cwd {
+            command.current_dir(cwd);
+        }
+
+        let mut child = command.spawn().map_err(AerError::SpawnFailed)?;
 
         // Assign the child to the job. child.as_raw_handle() returns the process
         // HANDLE (*mut c_void), which AssignProcessToJobObject accepts directly.

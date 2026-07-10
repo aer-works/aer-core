@@ -31,6 +31,44 @@ internal static partial class NativeMethods
         nint task,
         [MarshalAs(UnmanagedType.U1)] bool capture);
 
+    /// <summary>
+    /// Set an environment variable for the child process. Must be called before <see cref="aer_task_run"/>.
+    /// Repeatable: calling this again with the same <paramref name="key"/> overrides the previously set
+    /// value. Variables set this way are always visible to the child, regardless of
+    /// <see cref="aer_task_set_clear_env"/>.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="task"/> is typed as the <see cref="AerTaskHandle"/> SafeHandle itself (not
+    /// <c>nint</c>) so the CLR add-refs it for the duration of this call — see the discussion on issue #62
+    /// for why a raw handle + <c>DangerousGetHandle</c> is unsafe here (finalizer could free the task
+    /// mid-call).
+    /// </remarks>
+    [LibraryImport(Lib)]
+    public static partial AerErrorCode aer_task_set_env(
+        AerTaskHandle task,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
+
+    /// <summary>
+    /// Set whether the child process inherits the parent's environment. Must be called before
+    /// <see cref="aer_task_run"/>. When <paramref name="clear"/> is true, the child inherits nothing from
+    /// the parent environment — only variables set via <see cref="aer_task_set_env"/> are present.
+    /// </summary>
+    [LibraryImport(Lib)]
+    public static partial AerErrorCode aer_task_set_clear_env(
+        AerTaskHandle task,
+        [MarshalAs(UnmanagedType.U1)] bool clear);
+
+    /// <summary>
+    /// Set the child process's working directory. Must be called before <see cref="aer_task_run"/>. If the
+    /// path does not exist or is not a directory, this surfaces at <see cref="aer_task_run"/> time as
+    /// <see cref="AerErrorCode.SpawnFailed"/>.
+    /// </summary>
+    [LibraryImport(Lib)]
+    public static partial AerErrorCode aer_task_set_cwd(
+        AerTaskHandle task,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+
     // DllImport: LibraryImport cannot marshal SafeHandle as a return type (SYSLIB1051).
     /// <summary>
     /// Create a cancellation handle. Must be called before <see cref="aer_task_run"/>.

@@ -94,6 +94,83 @@ fn live_output_cmd() -> (String, Vec<String>) {
     }
 }
 
+/// Returns a shell invocation that echoes the value of a single named
+/// environment variable, cross-platform. On Windows, cmd literally echoes
+/// `%VAR%` back when the variable is unset, which is fine for assertions
+/// that only check for the *presence* of an expected value.
+fn echo_env_var_cmd(var: &str) -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        ("cmd".into(), vec!["/c".into(), format!("echo %{var}%")])
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("sh".into(), vec!["-c".into(), format!("echo ${var}")])
+    }
+}
+
+/// Returns a shell invocation that echoes two named environment variables on
+/// separate lines, cross-platform.
+fn echo_two_env_vars_cmd(var1: &str, var2: &str) -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "cmd".into(),
+            vec!["/c".into(), format!("echo %{var1}% & echo %{var2}%")],
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        (
+            "sh".into(),
+            vec!["-c".into(), format!("echo ${var1} ; echo ${var2}")],
+        )
+    }
+}
+
+/// Returns a shell invocation that prints the process's current working
+/// directory, cross-platform.
+fn print_cwd_cmd() -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        ("cmd".into(), vec!["/c".into(), "cd".into()])
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("sh".into(), vec!["-c".into(), "pwd".into()])
+    }
+}
+
+/// Returns a shell invocation that echoes one environment variable then
+/// prints the current working directory, cross-platform.
+fn echo_env_var_and_cwd_cmd(var: &str) -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "cmd".into(),
+            vec!["/c".into(), format!("echo %{var}% & cd")],
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("sh".into(), vec!["-c".into(), format!("echo ${var} ; pwd")])
+    }
+}
+
+/// The shell's absolute path, cross-platform. Used specifically for
+/// `with_clear_env` tests: after clearing the child's environment, relying
+/// on PATH-based resolution of "cmd"/"sh" would be testing an unrelated
+/// (and unspecified) resolution mechanism rather than clear-env behavior
+/// itself, so those tests invoke the shell by its well-known absolute path.
+#[cfg(target_os = "windows")]
+fn shell_absolute_path() -> String {
+    std::env::var("COMSPEC").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string())
+}
+#[cfg(not(target_os = "windows"))]
+fn shell_absolute_path() -> String {
+    "/bin/sh".to_string()
+}
+
 fn collect_events(program: &str, args: Vec<String>) -> (Result<(), AerError>, Vec<Event>) {
     let task = Task::new(program, args);
     let mut events = Vec::new();
@@ -1120,5 +1197,319 @@ fn panicking_callback_does_not_orphan_the_process() {
         !process_is_alive(recorded_pid),
         "process {recorded_pid} is still alive after the callback panicked — \
          the process tree was orphaned"
+    );
+}
+
+// --- #77: Environment and Working-Directory Control (Rust API) ---
+
+/// Collects all captured stdout bytes from a run's events into one buffer.
+fn stdout_text(events: &[Event]) -> String {
+    let bytes: Vec<u8> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::StdoutChunk { bytes, .. } => Some(bytes.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[test]
+fn with_env_var_is_visible_to_child() {
+    let (prog, args) = echo_env_var_cmd("AER_TEST_VAR");
+    let task = Task::new(prog, args)
+        .with_env("AER_TEST_VAR", "hello_from_aer")
+        .with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    let text = stdout_text(&events);
+    assert!(
+        text.contains("hello_from_aer"),
+        "expected env var value in child output, got: {:?}",
+        text
+    );
+}
+
+#[test]
+fn with_env_repeated_call_same_key_overrides_earlier_value() {
+    let (prog, args) = echo_env_var_cmd("AER_TEST_VAR");
+    let task = Task::new(prog, args)
+        .with_env("AER_TEST_VAR", "first_value")
+        .with_env("AER_TEST_VAR", "second_value")
+        .with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    let text = stdout_text(&events);
+    assert!(
+        text.contains("second_value"),
+        "expected the later with_env call to win, got: {:?}",
+        text
+    );
+    assert!(
+        !text.contains("first_value"),
+        "the earlier with_env value leaked through, got: {:?}",
+        text
+    );
+}
+
+#[test]
+fn with_clear_env_removes_inherited_var_but_keeps_explicit_ones() {
+    // SAFETY: no other thread in this test binary reads this uniquely-named
+    // var concurrently; set/remove bracket the run tightly.
+    unsafe {
+        std::env::set_var("AER_INHERITED_TEST_VAR", "should_not_be_inherited");
+    }
+
+    // Program resolved via shell_absolute_path() (see its doc comment for why),
+    // not the "cmd"/"sh" from echo_two_env_vars_cmd — only its args are reused.
+    let (_, args) = echo_two_env_vars_cmd("AER_INHERITED_TEST_VAR", "AER_EXPLICIT_TEST_VAR");
+    let task = Task::new(shell_absolute_path(), args)
+        .with_clear_env(true)
+        .with_env("AER_EXPLICIT_TEST_VAR", "should_be_present")
+        .with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    unsafe {
+        std::env::remove_var("AER_INHERITED_TEST_VAR");
+    }
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    let text = stdout_text(&events);
+    assert!(
+        !text.contains("should_not_be_inherited"),
+        "inherited var leaked through despite with_clear_env(true), got: {:?}",
+        text
+    );
+    assert!(
+        text.contains("should_be_present"),
+        "explicit with_env var missing after with_clear_env(true), got: {:?}",
+        text
+    );
+}
+
+#[test]
+fn with_cwd_changes_child_working_directory() {
+    let target_dir = std::env::temp_dir();
+    let expected = fs::canonicalize(&target_dir).expect("canonicalize temp dir");
+
+    let (prog, args) = print_cwd_cmd();
+    let task = Task::new(prog, args)
+        .with_cwd(&target_dir)
+        .with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    let printed = stdout_text(&events);
+    let printed_line = printed
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .expect("expected a non-empty line of output containing the cwd");
+    let actual = fs::canonicalize(printed_line.trim())
+        .unwrap_or_else(|e| panic!("failed to canonicalize printed cwd {printed_line:?}: {e}"));
+
+    assert_eq!(actual, expected, "child did not run in the configured cwd");
+}
+
+#[test]
+fn with_cwd_invalid_path_returns_spawn_failed_and_emits_no_events() {
+    let (prog, args) = exit_cmd(0);
+    let task = Task::new(prog, args).with_cwd("definitely_not_a_real_directory_xyzzy_aer");
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(
+        matches!(result, Err(AerError::SpawnFailed(_))),
+        "expected SpawnFailed, got {:?}",
+        result
+    );
+    assert!(
+        events.is_empty(),
+        "no events should be emitted when spawn fails due to invalid cwd"
+    );
+}
+
+// --- #77: Environment and Working-Directory Control (FFI) ---
+
+#[test]
+fn ffi_set_env_and_cwd_visible_in_child() {
+    let target_dir = std::env::temp_dir();
+    let expected = fs::canonicalize(&target_dir).expect("canonicalize temp dir");
+
+    let (prog, args) = echo_env_var_and_cwd_cmd("AER_FFI_TEST_VAR");
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let key = CString::new("AER_FFI_TEST_VAR").unwrap();
+    let value = CString::new("ffi_env_value").unwrap();
+    let env_code = unsafe { ffi::aer_task_set_env(task, key.as_ptr(), value.as_ptr()) };
+    assert_eq!(env_code, AerErrorCode::Ok);
+
+    let cwd_cstring = CString::new(target_dir.to_str().unwrap()).unwrap();
+    let cwd_code = unsafe { ffi::aer_task_set_cwd(task, cwd_cstring.as_ptr()) };
+    assert_eq!(cwd_code, AerErrorCode::Ok);
+
+    let cap_code = unsafe { ffi::aer_task_with_capture_output(task, true) };
+    assert_eq!(cap_code, AerErrorCode::Ok);
+
+    let mut data = FfiCaptureData {
+        started_pid: 0,
+        exited_code: -999,
+        stdout_chunks: Vec::new(),
+        stderr_chunks: Vec::new(),
+    };
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_capture),
+            &mut data as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::Ok);
+    let all: Vec<u8> = data.stdout_chunks.into_iter().flatten().collect();
+    let text = String::from_utf8_lossy(&all);
+    assert!(
+        text.contains("ffi_env_value"),
+        "expected env var value in child output, got: {:?}",
+        text
+    );
+
+    let printed_cwd_line = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .expect("expected a non-empty trailing line containing the cwd");
+    let actual = fs::canonicalize(printed_cwd_line.trim())
+        .unwrap_or_else(|e| panic!("failed to canonicalize printed cwd {printed_cwd_line:?}: {e}"));
+    assert_eq!(actual, expected, "child did not run in the configured cwd");
+}
+
+#[test]
+fn ffi_set_clear_env_removes_inherited_var() {
+    unsafe {
+        std::env::set_var("AER_FFI_INHERITED_VAR", "should_not_be_inherited_ffi");
+    }
+
+    // Program resolved via shell_absolute_path() (see its doc comment for why),
+    // not the "cmd"/"sh" from echo_env_var_cmd — only its args are reused.
+    let (_, args) = echo_env_var_cmd("AER_FFI_INHERITED_VAR");
+    let task = ffi_new_task(&shell_absolute_path(), &args);
+    assert!(!task.is_null());
+
+    let clear_code = unsafe { ffi::aer_task_set_clear_env(task, true) };
+    assert_eq!(clear_code, AerErrorCode::Ok);
+
+    let cap_code = unsafe { ffi::aer_task_with_capture_output(task, true) };
+    assert_eq!(cap_code, AerErrorCode::Ok);
+
+    let mut data = FfiCaptureData {
+        started_pid: 0,
+        exited_code: -999,
+        stdout_chunks: Vec::new(),
+        stderr_chunks: Vec::new(),
+    };
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_capture),
+            &mut data as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+    unsafe {
+        std::env::remove_var("AER_FFI_INHERITED_VAR");
+    }
+
+    assert_eq!(run_code, AerErrorCode::Ok);
+    let all: Vec<u8> = data.stdout_chunks.into_iter().flatten().collect();
+    let text = String::from_utf8_lossy(&all);
+    assert!(
+        !text.contains("should_not_be_inherited_ffi"),
+        "inherited var leaked through despite aer_task_set_clear_env(true), got: {:?}",
+        text
+    );
+}
+
+#[test]
+fn ffi_set_env_null_task_returns_null_pointer() {
+    let key = CString::new("K").unwrap();
+    let value = CString::new("V").unwrap();
+    let code = unsafe { ffi::aer_task_set_env(std::ptr::null_mut(), key.as_ptr(), value.as_ptr()) };
+    assert_eq!(code, AerErrorCode::NullPointer);
+}
+
+#[test]
+fn ffi_set_env_empty_key_returns_invalid_argument() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let key = CString::new("").unwrap();
+    let value = CString::new("V").unwrap();
+    let code = unsafe { ffi::aer_task_set_env(task, key.as_ptr(), value.as_ptr()) };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::InvalidArgument);
+}
+
+#[test]
+fn ffi_set_env_key_containing_equals_returns_invalid_argument() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let key = CString::new("BAD=KEY").unwrap();
+    let value = CString::new("V").unwrap();
+    let code = unsafe { ffi::aer_task_set_env(task, key.as_ptr(), value.as_ptr()) };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::InvalidArgument);
+}
+
+#[test]
+fn ffi_set_cwd_empty_returns_invalid_argument() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let path = CString::new("").unwrap();
+    let code = unsafe { ffi::aer_task_set_cwd(task, path.as_ptr()) };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::InvalidArgument);
+}
+
+#[test]
+fn ffi_set_cwd_invalid_path_causes_spawn_failed_on_run() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let path = CString::new("definitely_not_a_real_directory_xyzzy_aer").unwrap();
+    let cwd_code = unsafe { ffi::aer_task_set_cwd(task, path.as_ptr()) };
+    assert_eq!(cwd_code, AerErrorCode::Ok);
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::SpawnFailed);
+    assert!(
+        events.is_empty(),
+        "no events should be emitted when spawn fails due to invalid cwd"
     );
 }

@@ -1,4 +1,4 @@
-use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks};
+use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks, SpawnOptions};
 use crate::AerError;
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
@@ -9,7 +9,11 @@ use std::time::Duration;
 pub(crate) struct UnixProcess;
 
 impl OsProcess for UnixProcess {
-    fn spawn(program: &str, args: &[&str]) -> Result<OsHandle, AerError> {
+    fn spawn(
+        program: &str,
+        args: &[&str],
+        options: SpawnOptions<'_>,
+    ) -> Result<OsHandle, AerError> {
         let mut cmd = Command::new(program);
         cmd.args(args)
             // Pipes are required even though output is not surfaced to callers.
@@ -17,6 +21,18 @@ impl OsProcess for UnixProcess {
             // child.wait(). Never use Stdio::inherit here.
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // env_clear (if requested) must run before applying with_env entries,
+        // otherwise it would wipe out the very vars we just set.
+        if options.clear_env {
+            cmd.env_clear();
+        }
+        for (key, value) in options.env {
+            cmd.env(key, value);
+        }
+        if let Some(cwd) = options.cwd {
+            cmd.current_dir(cwd);
+        }
 
         // SAFETY: The closure only calls setsid(), which is documented as
         // async-signal-safe — safe to call between fork and exec.

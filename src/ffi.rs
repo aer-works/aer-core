@@ -60,6 +60,9 @@ pub enum AerErrorCode {
     Panic = 8,
     /// The process was killed by an explicit cancel request.
     Cancelled = 9,
+    /// A string argument failed validation (invalid UTF-8, empty key, or a
+    /// key containing '=').
+    InvalidArgument = 10,
 }
 
 /// C-compatible event delivered to AerEventCallback.
@@ -225,6 +228,140 @@ pub unsafe extern "C" fn aer_task_with_capture_output(
         match t.inner.take() {
             Some(inner) => {
                 t.inner = Some(inner.with_capture_output(capture));
+                clear_last_error();
+                AerErrorCode::Ok
+            }
+            None => AerErrorCode::AlreadyRun,
+        }
+    })) {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            AerErrorCode::Panic
+        }
+    }
+}
+
+/// Set an environment variable for the child process. Must be called before
+/// aer_task_run.
+///
+/// Repeatable: calling this again with the same `key` overrides the
+/// previously set value. Returns `AER_ERR_INVALID_ARGUMENT` if `key` or
+/// `value` is not valid UTF-8, if `key` is empty, or if `key` contains '='.
+///
+/// # Safety
+/// `task` must be a valid pointer returned by aer_task_new that has not been freed.
+/// `key` and `value` must be valid null-terminated UTF-8 C strings.
+#[no_mangle]
+pub unsafe extern "C" fn aer_task_set_env(
+    task: *mut AerTask,
+    key: *const c_char,
+    value: *const c_char,
+) -> AerErrorCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if task.is_null() || key.is_null() || value.is_null() {
+            return AerErrorCode::NullPointer;
+        }
+        let t = unsafe { &mut *task };
+        if t.has_run {
+            return AerErrorCode::AlreadyRun;
+        }
+        let key_str = match unsafe { CStr::from_ptr(key) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return AerErrorCode::InvalidArgument,
+        };
+        let value_str = match unsafe { CStr::from_ptr(value) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return AerErrorCode::InvalidArgument,
+        };
+        if key_str.is_empty() || key_str.contains('=') {
+            return AerErrorCode::InvalidArgument;
+        }
+        match t.inner.take() {
+            Some(inner) => {
+                t.inner = Some(inner.with_env(key_str, value_str));
+                clear_last_error();
+                AerErrorCode::Ok
+            }
+            None => AerErrorCode::AlreadyRun,
+        }
+    })) {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            AerErrorCode::Panic
+        }
+    }
+}
+
+/// Set whether the child process inherits the parent's environment. Must be
+/// called before aer_task_run.
+///
+/// When `clear` is true, the child inherits nothing from the parent
+/// environment — only variables set via aer_task_set_env are present.
+/// Default is false (inherit the full parent environment).
+///
+/// # Safety
+/// `task` must be a valid pointer returned by aer_task_new that has not been freed.
+#[no_mangle]
+pub unsafe extern "C" fn aer_task_set_clear_env(task: *mut AerTask, clear: bool) -> AerErrorCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if task.is_null() {
+            return AerErrorCode::NullPointer;
+        }
+        let t = unsafe { &mut *task };
+        if t.has_run {
+            return AerErrorCode::AlreadyRun;
+        }
+        match t.inner.take() {
+            Some(inner) => {
+                t.inner = Some(inner.with_clear_env(clear));
+                clear_last_error();
+                AerErrorCode::Ok
+            }
+            None => AerErrorCode::AlreadyRun,
+        }
+    })) {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            AerErrorCode::Panic
+        }
+    }
+}
+
+/// Set the child process's working directory. Must be called before
+/// aer_task_run.
+///
+/// If the path does not exist or is not a directory, this surfaces at
+/// aer_task_run time as AER_ERR_SPAWN_FAILED (std's Command::current_dir
+/// behavior) — no events are emitted for that run.
+///
+/// Returns `AER_ERR_INVALID_ARGUMENT` if `path` is not valid UTF-8 or is empty.
+///
+/// # Safety
+/// `task` must be a valid pointer returned by aer_task_new that has not been freed.
+/// `path` must be a valid null-terminated UTF-8 C string.
+#[no_mangle]
+pub unsafe extern "C" fn aer_task_set_cwd(task: *mut AerTask, path: *const c_char) -> AerErrorCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if task.is_null() || path.is_null() {
+            return AerErrorCode::NullPointer;
+        }
+        let t = unsafe { &mut *task };
+        if t.has_run {
+            return AerErrorCode::AlreadyRun;
+        }
+        let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return AerErrorCode::InvalidArgument,
+        };
+        if path_str.is_empty() {
+            return AerErrorCode::InvalidArgument;
+        }
+        match t.inner.take() {
+            Some(inner) => {
+                t.inner = Some(inner.with_cwd(path_str));
                 clear_last_error();
                 AerErrorCode::Ok
             }

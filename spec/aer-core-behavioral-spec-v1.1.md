@@ -95,6 +95,16 @@ These invariants are enforced by the state machine and validated by integration 
 - **Optional timeout.** Set via `Task::with_timeout(Duration)`. When not set, `run()` blocks indefinitely (M1 behavior) unless cancelled (§7).
 - **Output capture is opt-in and does not change execution semantics.** By default (`CaptureOutput: false`), behavior is identical to M1/M2: stdout/stderr are captured internally only to prevent pipe-buffer deadlock and are not surfaced to callers. When `CaptureOutput: true` is set, the same internal capture is additionally surfaced to the caller as `StdoutChunk`/`StderrChunk` events. No other behavior changes between the two modes — `run()`'s blocking semantics, timeout handling, and exit reporting are identical either way.
 
+### 4.1 Environment and Working Directory
+
+Three pre-spawn configuration methods control the child process's environment and starting directory. Like `with_timeout` and `with_capture_output`, these are builder methods on `Task`; once `run()` has been called, none of them may be changed.
+
+- **`with_env(key, value)`** — sets an environment variable for the child. Repeatable; if called more than once with the same key, the last call before `run()` wins (later calls override earlier ones for that key). Variables set this way are always visible to the child, regardless of `with_clear_env`.
+- **`with_clear_env(bool)`** — when `true`, the child does not inherit any variable from the parent process's environment; only variables set via `with_env` are present. Default `false` — the child inherits the full parent environment, unchanged from M1–M4 behavior.
+- **`with_cwd(path)`** — sets the child's working directory. If the path does not exist or is not a directory, spawning fails the same way any other OS-level spawn rejection does: `run()` returns `Err(AerError::SpawnFailed)` and, per Ordering Invariant 4 (§3), neither `Started` nor `Exited` is emitted.
+
+All three are configuration, not runtime state: they take effect once, at spawn, and have no observable effect once the process is running. Behavior is identical on Windows and Unix — both platforms apply configuration through the same standard-library process-builder primitives (`env` / `env_clear` / `current_dir`), with no OS-specific divergence.
+
 ---
 
 ## 5. Timeout Semantics (M2)

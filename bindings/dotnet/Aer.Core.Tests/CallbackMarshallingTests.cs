@@ -20,7 +20,7 @@ public class CallbackMarshallingTests
 
         using CallbackBridge bridge = new((evt, _) => events.Add(evt));
         AerErrorCode result = NativeMethods.aer_task_run(
-            task.DangerousGetHandle(), bridge.NativeCallback, nint.Zero);
+            task, bridge.NativeCallback, nint.Zero);
 
         Assert.Equal(AerErrorCode.Ok, result);
         Assert.Contains(events, e => e.Kind == AerEventKind.Started);
@@ -39,7 +39,7 @@ public class CallbackMarshallingTests
         using AerTaskHandle task = NativeMethods.CreateTask(prog, args);
         Assert.False(task.IsInvalid);
 
-        _ = NativeMethods.aer_task_with_capture_output(task.DangerousGetHandle(), true);
+        _ = NativeMethods.aer_task_with_capture_output(task, true);
 
         using CallbackBridge bridge = new((evt, data) =>
         {
@@ -49,7 +49,7 @@ public class CallbackMarshallingTests
             }
         });
         AerErrorCode result = NativeMethods.aer_task_run(
-            task.DangerousGetHandle(), bridge.NativeCallback, nint.Zero);
+            task, bridge.NativeCallback, nint.Zero);
 
         Assert.Equal(AerErrorCode.Ok, result);
         Assert.NotEmpty(chunks);

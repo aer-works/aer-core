@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.6.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.5.0...aer-core-v0.6.0) (2026-07-10)
+
+
+### Features
+
+* **core:** Add environment and working-directory control to Task, the C ABI, and the .NET binding ([#87](https://github.com/aer-works/aer-core/issues/87)) ([4cf3f31](https://github.com/aer-works/aer-core/commit/4cf3f313434180cb289ffd2a07818d68f15fc068)), closes [#77](https://github.com/aer-works/aer-core/issues/77)
+* **dotnet:** Bridge C callback to managed delegate (M5 [#61](https://github.com/aer-works/aer-core/issues/61)) ([#70](https://github.com/aer-works/aer-core/issues/70)) ([e80bc4c](https://github.com/aer-works/aer-core/commit/e80bc4cc746a03a24419f5e34681f136a8f5bc22))
+* **dotnet:** High-level AerTask managed wrapper with CancellationToken integration ([#91](https://github.com/aer-works/aer-core/issues/91)) ([5dfb2fa](https://github.com/aer-works/aer-core/commit/5dfb2fa5f0df2604a029089715e8f82776188cad))
+* **dotnet:** Safe handles for task and cancel pointers ([#69](https://github.com/aer-works/aer-core/issues/69)) ([32149fd](https://github.com/aer-works/aer-core/commit/32149fd3f4ceead0fb23210754df6fbd7be947b2))
+* **dotnet:** Scaffold Aer.Core P/Invoke layer and xUnit project ([e4c744c](https://github.com/aer-works/aer-core/commit/e4c744c1d0a7e0f610cf67544c9130dcf68f57ab))
+* **dotnet:** Scaffold Aer.Core P/Invoke layer and xUnit project (M5 issue [#59](https://github.com/aer-works/aer-core/issues/59)) ([a8ea939](https://github.com/aer-works/aer-core/commit/a8ea939abcc0b77d6ec1e6ec33a55a64cbab8e4e))
+
+
+### Bug Fixes
+
+* **core:** Deliver captured output chunks live during execution ([#83](https://github.com/aer-works/aer-core/issues/83)) ([03bcebe](https://github.com/aer-works/aer-core/commit/03bcebebd8546c0651010bd7f5ad4bc8e3c3ee6e)), closes [#72](https://github.com/aer-works/aer-core/issues/72)
+* **core:** Kill the process tree when the event callback panics ([#86](https://github.com/aer-works/aer-core/issues/86)) ([0cfa9e3](https://github.com/aer-works/aer-core/commit/0cfa9e3909e463cb74dec99a39e1464927c8998e)), closes [#75](https://github.com/aer-works/aer-core/issues/75)
+* **core:** Probe tree liveness before cancel/timeout kills to avoid misreporting natural exits ([#84](https://github.com/aer-works/aer-core/issues/84)) ([db17046](https://github.com/aer-works/aer-core/commit/db17046c85ad5f902f526676d4c7673b7de594f3)), closes [#73](https://github.com/aer-works/aer-core/issues/73)
+* **os:** Kill the spawned child when job assignment fails on Windows ([#85](https://github.com/aer-works/aer-core/issues/85)) ([0246de8](https://github.com/aer-works/aer-core/commit/0246de8f840809ce3fdda0c21d744442ca7d7903)), closes [#74](https://github.com/aer-works/aer-core/issues/74)
+* **os:** terminate job object at root exit so timeout/cancel paths cannot hang or misreport ([#81](https://github.com/aer-works/aer-core/issues/81)) ([dcb1042](https://github.com/aer-works/aer-core/commit/dcb104221c2d242dbcd1c4dfa83380605cf8746b)), closes [#71](https://github.com/aer-works/aer-core/issues/71)
+
+
+### Performance Improvements
+
+* **os:** Poll for tree death during the Unix kill grace window instead of sleeping it out ([#90](https://github.com/aer-works/aer-core/issues/90)) ([362155a](https://github.com/aer-works/aer-core/commit/362155a0d6bf961d8d5f9343f22905cdfb1f27b5)), closes [#76](https://github.com/aer-works/aer-core/issues/76)
+
+
+### Documentation
+
+* Add IMPLEMENTATION_PLAN.md and redirect AER Overview to aer-flow ([dad2d58](https://github.com/aer-works/aer-core/commit/dad2d58db5b517d20ef7a4dce6e6181c2058755b))
+* Add IMPLEMENTATION_PLAN.md and redirect AER Overview to aer-flow ([850db7a](https://github.com/aer-works/aer-core/commit/850db7a29cdf258ff0ee7539aa7dba509f514c45))
+* Land plan refinements and record M5 as complete ([#94](https://github.com/aer-works/aer-core/issues/94)) ([1686e52](https://github.com/aer-works/aer-core/commit/1686e52c6912e25c7df827acf35e90e0a658f231)), closes [#93](https://github.com/aer-works/aer-core/issues/93)
+* **spec:** Correct stale M4 status and qualify the Unix no-orphans guarantee ([#82](https://github.com/aer-works/aer-core/issues/82)) ([a56adcc](https://github.com/aer-works/aer-core/commit/a56adccf8c44cd2480ccfae1abeac5e88ffa944e)), closes [#80](https://github.com/aer-works/aer-core/issues/80)
+
+
+### Continuous Integration
+
+* Kill dotnet processes before cleanup to fix Windows EPERM on post-job ([44f78cb](https://github.com/aer-works/aer-core/commit/44f78cb0f32308f2bab5d2c89e0418290632ce4a))
+* Remove dotnet-sdk from pixi, use actions/setup-dotnet in CI ([7389794](https://github.com/aer-works/aer-core/commit/738979478beabdd8a00b73d8b28b9db8e1338350))
+* Shut down Roslyn build server before cleanup to fix Windows EBUSY ([b34a9b4](https://github.com/aer-works/aer-core/commit/b34a9b42a58fffff2b721b7cd40104f54b0e3f2e))
+
+
+### Tests
+
+* **dotnet:** Behavioral-contract integration tests and C# usage docs ([#92](https://github.com/aer-works/aer-core/issues/92)) ([848e9f7](https://github.com/aer-works/aer-core/commit/848e9f7ad41630454f7490dc13653880653db35a)), closes [#64](https://github.com/aer-works/aer-core/issues/64)
+
+
+### Miscellaneous
+
+* **core:** FFI and code hygiene bundle ([#88](https://github.com/aer-works/aer-core/issues/88)) ([66e2259](https://github.com/aer-works/aer-core/commit/66e22596b5b81c159aa558e340bd9e934f7b74f7)), closes [#78](https://github.com/aer-works/aer-core/issues/78)
+
 ## [0.5.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.4.0...aer-core-v0.5.0) (2026-06-29)
 
 

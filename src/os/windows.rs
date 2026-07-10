@@ -1,4 +1,4 @@
-use super::{KillHandle, OsHandle, OsProcess, OutputSinks};
+use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks};
 use crate::AerError;
 use std::ffi::c_void;
 use std::io::{self, Read};
@@ -104,7 +104,7 @@ impl OsProcess for WindowsProcess {
                         match out.read(&mut buf) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
-                                let _ = tx.send((seq, buf[..n].to_vec()));
+                                let _ = tx.send(ChunkMsg::Stdout(seq, buf[..n].to_vec()));
                                 seq += 1;
                             }
                         }
@@ -124,7 +124,7 @@ impl OsProcess for WindowsProcess {
                         match err.read(&mut buf) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => {
-                                let _ = tx.send((seq, buf[..n].to_vec()));
+                                let _ = tx.send(ChunkMsg::Stderr(seq, buf[..n].to_vec()));
                                 seq += 1;
                             }
                         }

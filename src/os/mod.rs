@@ -23,11 +23,21 @@ pub(crate) struct OsHandle {
     pub(crate) kill: KillHandle,
 }
 
-/// Senders for captured stdout/stderr chunks. Each `(u64, Vec<u8>)` is a
-/// `(seq, bytes)` pair. `None` means the stream should be silently drained.
+/// A single captured chunk, tagged with the stream it came from. Sent over one
+/// shared channel so chunks are delivered to the caller in true arrival order
+/// while per-stream `seq` ordering (each drain thread's sends are FIFO on its
+/// own sender clone) is preserved automatically.
+pub(crate) enum ChunkMsg {
+    Stdout(u64, Vec<u8>),
+    Stderr(u64, Vec<u8>),
+}
+
+/// Senders for captured stdout/stderr chunks — clones of the same channel,
+/// distinguished by which `ChunkMsg` variant each drain thread sends.
+/// `None` means the stream should be silently drained.
 pub(crate) struct OutputSinks {
-    pub(crate) stdout: Option<mpsc::Sender<(u64, Vec<u8>)>>,
-    pub(crate) stderr: Option<mpsc::Sender<(u64, Vec<u8>)>>,
+    pub(crate) stdout: Option<mpsc::Sender<ChunkMsg>>,
+    pub(crate) stderr: Option<mpsc::Sender<ChunkMsg>>,
 }
 
 /// Platform abstraction for spawning, waiting on, and killing a process.

@@ -23,7 +23,8 @@ AER is a Rust core library that guarantees consistent process lifecycle behavior
 
 ## Quickstart
 
-Requires [pixi](https://pixi.sh). The Rust toolchain is managed automatically — nothing else to install.
+Requires [pixi](https://pixi.sh). The Rust toolchain is managed automatically — nothing else to
+install for the Rust examples and tests below.
 
 ```sh
 # M1 — basic lifecycle: spawn a process and observe events
@@ -39,6 +40,9 @@ pixi run example-tree
 pixi run example-capture
 pixi run example-cancel
 
+# environment variables and working directory
+pixi run example-env
+
 # Run all tests
 pixi run test
 
@@ -46,6 +50,10 @@ pixi run test
 pixi run lint
 pixi run fmt-check
 ```
+
+The `dotnet-*` tasks (see [Available tasks](#available-tasks)) additionally require a system
+.NET 10 SDK — pixi does not manage it. See [Prerequisites](CLAUDE.md#prerequisites) for install
+commands.
 
 ### Example output
 
@@ -97,13 +105,16 @@ Failures are typed, not swallowed: `AerTimeoutException` and `AerCancelException
 `AerException` subtypes carrying an `AerErrorCode`) signal timeout and cancellation respectively;
 every other native failure surfaces as a plain `AerException`.
 
+For a full runnable walkthrough (live output capture, `RunAsync` cancellation, `WithEnv`/`WithCwd`),
+see `bindings/dotnet/Aer.Core.Example` — run it with `pixi run dotnet-example`.
+
 ---
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────┐
-│           aer-core              │  ← this repo, Milestones 1–4
+│           aer-core              │  ← this repo, Milestones 1–5
 │                                 │
 │  Task::run()                    │
 │    │                            │
@@ -153,6 +164,13 @@ Project board: [AER Roadmap](https://github.com/orgs/aer-works/projects/1)
 | `pixi run example-tree` | Run the M3 process tree example |
 | `pixi run example-capture` | Run the M4 stdout/stderr capture example |
 | `pixi run example-cancel` | Run the M4 manual cancellation example |
+| `pixi run example-env` | Run the environment/working-directory example |
+| `pixi run dotnet-build` | Build the .NET binding and its test/example projects |
+| `pixi run dotnet-test` | Run the .NET binding's test suite (builds the Rust core first) |
+| `pixi run dotnet-lint` | `dotnet build -warnaserror` for the .NET solution |
+| `pixi run dotnet-fmt` | Auto-fix .NET formatting |
+| `pixi run dotnet-fmt-check` | Check .NET formatting (used in CI) |
+| `pixi run dotnet-example` | Run the .NET usage tutorial (builds the Rust core first) |
 
 ---
 

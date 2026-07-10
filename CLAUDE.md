@@ -59,6 +59,7 @@ Always use `pixi run <task>`. Never invoke `cargo` or `dotnet` directly in CI.
 | `example-tree` | `cargo run --example tree` (M3) |
 | `example-capture` | `cargo run --example capture` (M4) |
 | `example-cancel` | `cargo run --example cancel` (M4) |
+| `example-env` | `cargo run --example env` (env/cwd) |
 
 **\.NET binding** (requires .NET 10 SDK on PATH)
 
@@ -69,6 +70,7 @@ Always use `pixi run <task>`. Never invoke `cargo` or `dotnet` directly in CI.
 | `dotnet-lint` | `dotnet build -warnaserror` |
 | `dotnet-fmt` | `dotnet format` (fix) |
 | `dotnet-fmt-check` | `dotnet format --verify-no-changes` (CI) |
+| `dotnet-example` | `dotnet run --project Aer.Core.Example` (also runs `build` first) |
 
 ---
 

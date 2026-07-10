@@ -119,3 +119,4 @@ Do not add any of these until the milestone that introduces them:
 - Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `ci`, `test`, `chore`
 - No direct commits to `main`. All changes via PR.
 - Close issues in the PR body (`Closes #n`), not in commit messages.
+- Each issue is scoped to ship as a standalone PR (one-to-one). If two issues can't be reviewed independently, the issue boundary was drawn incorrectly — fix it in the backlog, not at PR time.

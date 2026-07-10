@@ -1,6 +1,8 @@
-use super::{ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks, SpawnOptions};
+use super::{
+    spawn_drain_thread, ChunkMsg, KillHandle, OsHandle, OsProcess, OutputSinks, SpawnOptions,
+};
 use crate::AerError;
-use std::io::{self, Read};
+use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -68,46 +70,14 @@ impl OsProcess for UnixProcess {
         // Sequential draining deadlocks if the child fills the stderr buffer while
         // the drain thread is still blocked on stdout (or vice versa). Both threads
         // must start before child.wait() is called.
-        let stdout_drain = child.stdout.take().map(|mut out| {
-            let tx = sinks.stdout;
-            thread::spawn(move || {
-                if let Some(tx) = tx {
-                    let mut seq = 0u64;
-                    let mut buf = vec![0u8; 8192];
-                    loop {
-                        match out.read(&mut buf) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                let _ = tx.send(ChunkMsg::Stdout(seq, buf[..n].to_vec()));
-                                seq += 1;
-                            }
-                        }
-                    }
-                } else {
-                    let _ = io::copy(&mut out, &mut io::sink());
-                }
-            })
-        });
-        let stderr_drain = child.stderr.take().map(|mut err| {
-            let tx = sinks.stderr;
-            thread::spawn(move || {
-                if let Some(tx) = tx {
-                    let mut seq = 0u64;
-                    let mut buf = vec![0u8; 8192];
-                    loop {
-                        match err.read(&mut buf) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                let _ = tx.send(ChunkMsg::Stderr(seq, buf[..n].to_vec()));
-                                seq += 1;
-                            }
-                        }
-                    }
-                } else {
-                    let _ = io::copy(&mut err, &mut io::sink());
-                }
-            })
-        });
+        let stdout_drain = child
+            .stdout
+            .take()
+            .map(|out| spawn_drain_thread(out, sinks.stdout, ChunkMsg::Stdout));
+        let stderr_drain = child
+            .stderr
+            .take()
+            .map(|err| spawn_drain_thread(err, sinks.stderr, ChunkMsg::Stderr));
 
         // Save result so cleanup always runs even if wait fails (e.g. ECHILD).
         // Skipping killpg on wait error would leave grandchildren as orphans.

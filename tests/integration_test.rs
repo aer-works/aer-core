@@ -296,6 +296,59 @@ fn timeout_does_not_fire_for_fast_process() {
     assert!(matches!(events[1], Event::Exited { code: 0, .. }));
 }
 
+/// Regression coverage for #79: no existing test exercises a child that
+/// survives SIGTERM, so `kill_escalating`'s SIGKILL escalation (the second
+/// half of the grace-window logic in os/unix.rs) was never actually proven
+/// to fire. `trap "" TERM` makes the shell ignore SIGTERM outright; only the
+/// SIGKILL that follows the grace window can end it.
+///
+/// Unix-only: on Windows, `kill_escalating`'s `_grace` parameter is ignored
+/// and the process is terminated immediately (see os/windows.rs) — there is
+/// no graceful/SIGTERM phase to escalate past, so there is nothing this test
+/// could exercise there.
+///
+/// Wall-clock cost: KILL_GRACE (task.rs) is 5s and `kill_escalating` always
+/// sleeps out the full grace window after sending SIGTERM before sending
+/// SIGKILL, regardless of whether the target already died. With a 1s timeout
+/// this test costs ~6s wall time — acceptable per #79's review, and it
+/// overlaps with other tests under cargo test's default parallelism.
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn sigterm_trapping_process_is_killed_by_sigkill_escalation() {
+    let task = Task::new(
+        "sh",
+        vec!["-c".to_string(), "trap '' TERM; sleep 30".to_string()],
+    )
+    .with_timeout(Duration::from_secs(1));
+    let mut events = Vec::new();
+    let start = Instant::now();
+    let result = task.run(|e| events.push(e));
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(result, Err(AerError::TimedOut)),
+        "expected TimedOut, got {:?}",
+        result
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "run() took {elapsed:?} — SIGKILL escalation may not have fired against \
+         the SIGTERM-trapping child"
+    );
+    assert_eq!(events.len(), 2, "expected Started + Exited even on timeout");
+    assert!(
+        matches!(
+            events[1],
+            Event::Exited {
+                code: -1,
+                reason: ExitReason::TimedOut
+            }
+        ),
+        "expected TimedOut Exited, got {:?}",
+        events[1]
+    );
+}
+
 // --- M3: Process Tree Cleanup ---
 
 /// Returns a command that spawns a long-lived grandchild, writes its PID to
@@ -830,6 +883,176 @@ fn capture_delivers_chunks_while_process_is_alive() {
     }
 }
 
+/// Regression coverage for #79: the capture path (`with_capture_output`) had
+/// ~50 lines of test coverage against ~1000 for the discard path, and no test
+/// combined capture with timeout, cancel, or a process tree. This proves
+/// chunks emitted by a process are delivered live before the timeout kill's
+/// `Exited { reason: TimedOut }` — the capture-path recv loop in
+/// `run_impl` must drain the channel before observing the kill's effect, not
+/// discard already-buffered chunks.
+#[test]
+fn capture_output_with_timeout_delivers_chunks_then_timed_out_exit() {
+    let (prog, args) = live_output_cmd(); // prints, then sleeps ~3s
+    let task = Task::new(prog, args)
+        .with_capture_output(true)
+        .with_timeout(Duration::from_millis(500));
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(
+        matches!(result, Err(AerError::TimedOut)),
+        "expected TimedOut, got {:?}",
+        result
+    );
+
+    let exited_pos = events
+        .iter()
+        .position(|e| matches!(e, Event::Exited { .. }))
+        .expect("expected an Exited event");
+    assert!(
+        matches!(
+            events[exited_pos],
+            Event::Exited {
+                code: -1,
+                reason: ExitReason::TimedOut
+            }
+        ),
+        "expected TimedOut Exited, got {:?}",
+        events[exited_pos]
+    );
+
+    let stdout_positions: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e, Event::StdoutChunk { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !stdout_positions.is_empty(),
+        "expected at least one StdoutChunk before the timeout fired"
+    );
+    for i in stdout_positions {
+        assert!(
+            i < exited_pos,
+            "chunk at index {i} must precede Exited at {exited_pos}"
+        );
+    }
+}
+
+/// Capture-path coverage for #79 (see doc comment on the timeout variant
+/// above for context): proves chunks are delivered before the
+/// `Exited { reason: CancelRequested }` event when a cancel fired from
+/// another thread interrupts a still-emitting process.
+#[test]
+fn capture_output_with_cancel_delivers_chunks_then_cancel_requested_exit() {
+    let (prog, args) = live_output_cmd(); // prints, then sleeps ~3s
+    let task = Task::new(prog, args).with_capture_output(true);
+    let cancel = CancelHandle::new();
+    let cancel_clone = cancel.clone();
+
+    let cancel_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        cancel_clone.cancel();
+    });
+
+    let mut events = Vec::new();
+    let result = task.run_with_cancel(|e| events.push(e), &cancel);
+    cancel_thread.join().unwrap();
+
+    assert!(
+        matches!(result, Err(AerError::Cancelled)),
+        "expected Cancelled, got {:?}",
+        result
+    );
+
+    let exited_pos = events
+        .iter()
+        .position(|e| matches!(e, Event::Exited { .. }))
+        .expect("expected an Exited event");
+    assert!(
+        matches!(
+            events[exited_pos],
+            Event::Exited {
+                code: -1,
+                reason: ExitReason::CancelRequested
+            }
+        ),
+        "expected CancelRequested Exited, got {:?}",
+        events[exited_pos]
+    );
+
+    let stdout_positions: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e, Event::StdoutChunk { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        !stdout_positions.is_empty(),
+        "expected at least one StdoutChunk before cancel fired"
+    );
+    for i in stdout_positions {
+        assert!(
+            i < exited_pos,
+            "chunk at index {i} must precede Exited at {exited_pos}"
+        );
+    }
+}
+
+/// Capture-path coverage for #79: `process_tree_is_cleaned_up` and
+/// `timeout_with_process_tree_reports_natural_exit` already prove the
+/// *discard* path survives a grandchild that inherits stdout/stderr pipes
+/// (root exit triggers a group-wide kill that unblocks the drain threads).
+/// The capture live-delivery path (`run_impl`'s capture branch) has its own
+/// recv loop that only terminates once both drain threads' `chunk_tx` clones
+/// are dropped — nothing proved that path survives the same grandchild
+/// scenario rather than hanging on a pipe the grandchild still holds open.
+#[test]
+fn capture_output_with_process_tree_returns_promptly_with_natural_exit() {
+    let pid_file = std::env::temp_dir().join("aer_test_grandchild_pid_capture.txt");
+    let pid_file_str = pid_file.to_str().unwrap();
+
+    let (prog, args) = orphan_cmd(pid_file_str);
+    let task = Task::new(prog, args).with_capture_output(true);
+    let mut events = Vec::new();
+    let start = Instant::now();
+    let result = task.run(|e| events.push(e));
+    let elapsed = start.elapsed();
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "run() took {elapsed:?} — the capture path's recv loop may be \
+         deadlocked on the grandchild holding stdout/stderr open"
+    );
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Exited {
+                code: 0,
+                reason: ExitReason::NaturalExit
+            })
+        ),
+        "expected NaturalExit with code 0, got {:?}",
+        events.last()
+    );
+
+    let exited_pos = events
+        .iter()
+        .position(|e| matches!(e, Event::Exited { .. }))
+        .expect("expected an Exited event");
+    for (i, e) in events.iter().enumerate() {
+        if matches!(e, Event::StdoutChunk { .. } | Event::StderrChunk { .. }) {
+            assert!(
+                i < exited_pos,
+                "chunk at index {i} must precede Exited at {exited_pos}"
+            );
+        }
+    }
+
+    let _ = fs::remove_file(&pid_file);
+}
+
 // --- M4b: Observation Tier (FFI) ---
 
 /// Accumulates captured output bytes during the FFI callback (pointer is only
@@ -1061,6 +1284,51 @@ fn cancel_is_idempotent() {
     cancel_thread.join().unwrap();
 
     assert!(matches!(result, Err(AerError::Cancelled)));
+}
+
+/// Regression coverage for #79: only cancel-during-run
+/// (`cancel_kills_running_process`) and cancel-after-exit
+/// (`cancel_after_exit_is_noop`) were covered before this — nothing exercised
+/// `cancel()` called before `run_with_cancel` is ever invoked. Per
+/// `run_impl`'s cancel-wiring block in task.rs, a pre-spawn cancel leaves
+/// `cancelled` true and `kill` unset; once the process actually spawns,
+/// `run_impl` must notice the already-set flag and kill immediately instead
+/// of waiting for a subsequent `cancel()` call that will never come.
+#[test]
+fn cancel_before_spawn_reports_cancel_requested() {
+    let (prog, args) = sleep_cmd(30);
+    let task = Task::new(prog, args);
+    let cancel = CancelHandle::new();
+    cancel.cancel(); // cancelled BEFORE run_with_cancel is ever called
+
+    let mut events = Vec::new();
+    let start = Instant::now();
+    let result = task.run_with_cancel(|e| events.push(e), &cancel);
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(result, Err(AerError::Cancelled)),
+        "expected Cancelled, got {:?}",
+        result
+    );
+    assert!(
+        elapsed < Duration::from_secs(15),
+        "run_with_cancel() took {elapsed:?} — a pre-spawn cancel should kill \
+         the process promptly rather than waiting out the sleep 30"
+    );
+    assert_eq!(events.len(), 2, "expected Started + Exited");
+    assert!(matches!(events[0], Event::Started { .. }));
+    assert!(
+        matches!(
+            events[1],
+            Event::Exited {
+                code: -1,
+                reason: ExitReason::CancelRequested
+            }
+        ),
+        "expected CancelRequested Exited, got {:?}",
+        events[1]
+    );
 }
 
 // --- M4c: Cancellation and ExitReason (FFI) ---

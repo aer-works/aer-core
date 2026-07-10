@@ -138,13 +138,22 @@ impl OsProcess for WindowsProcess {
         // Wait for the root process only — NOT for grandchildren to close the pipe.
         let status = child.wait().map_err(AerError::WaitFailed)?;
 
-        // Decrement the Arc<JobHandle> ref count. In the no-timeout path, task.rs
-        // deliberately holds no extra clone, so this is the last reference:
-        // CloseHandle fires immediately, triggering KILL_ON_JOB_CLOSE for every
-        // grandchild still in the job (closing their inherited pipe handles and
-        // unblocking the drain threads). In the timeout path, TerminateJobObject
-        // has already killed the tree; this just decrements from 2 → 1 (the
-        // monitor still holds one ref, which drops when the monitor thread exits).
+        // Explicitly terminate the job now, independent of how many Arc<JobHandle>
+        // clones are outstanding. task.rs's timeout monitor and CancelHandle both
+        // hold their own clone of this KillHandle for longer than this function's
+        // scope (the monitor for the full timeout duration; the cancel handle until
+        // wait() returns), so this call — not Drop — is what guarantees every
+        // surviving grandchild is killed and its inherited pipe handles closed here,
+        // unblocking the drain threads below. The spec's guarantee is "nothing
+        // survives run() returning", so terminating stragglers at root-exit is the
+        // intended semantic regardless of who else is holding a reference.
+        // Errors are ignored: the job may already be empty/terminated (e.g. the
+        // timeout or cancel path already called TerminateJobObject).
+        let _ = unsafe { TerminateJobObject(kill.job.0, 1) };
+
+        // Now drop this thread's reference. Any clone still held by the monitor or
+        // cancel handle is harmless: when it later drops, CloseHandle fires on an
+        // already-empty, already-terminated job.
         drop(kill);
 
         // Drain threads unblock once all pipe write-ends are closed.

@@ -295,6 +295,87 @@ fn process_tree_is_cleaned_up() {
     let _ = fs::remove_file(&pid_file);
 }
 
+/// Regression test for #71: a generous timeout must not defeat process-tree
+/// cleanup at root-exit. task.rs's timeout monitor thread holds its own clone of
+/// the `KillHandle` (`kill_for_monitor`) for the full timeout duration, so if
+/// `wait()` relied on Arc refcounting to force-close the job/process-group, the
+/// drain threads would block until the deadline and this would be misreported as
+/// `TimedOut` instead of `NaturalExit`.
+#[test]
+fn timeout_with_process_tree_reports_natural_exit() {
+    let pid_file = std::env::temp_dir().join("aer_test_grandchild_pid_timeout.txt");
+    let pid_file_str = pid_file.to_str().unwrap();
+
+    let (prog, args) = orphan_cmd(pid_file_str);
+    let task = Task::new(prog, args).with_timeout(Duration::from_secs(30));
+    let mut events = Vec::new();
+    let start = std::time::Instant::now();
+    let result = task.run(|e| events.push(e));
+    let elapsed = start.elapsed();
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "run() took {elapsed:?} — the timeout monitor's KillHandle clone is blocking \
+         cleanup until the 30s deadline instead of NaturalExit firing promptly"
+    );
+    assert_eq!(events.len(), 2);
+    assert!(
+        matches!(
+            events[1],
+            Event::Exited {
+                code: 0,
+                reason: ExitReason::NaturalExit
+            }
+        ),
+        "expected Exited {{ code: 0, reason: NaturalExit }}, got {:?}",
+        events[1]
+    );
+
+    let _ = fs::remove_file(&pid_file);
+}
+
+/// Regression test for #71: a `CancelHandle` that is never cancelled must not
+/// defeat process-tree cleanup at root-exit. `run_with_cancel()` stores its own
+/// clone of the `KillHandle` in the `CancelHandle` and only clears it AFTER
+/// `wait()` returns (task.rs `run_impl`) — a circular wait if `wait()` relied on
+/// Arc refcounting to force-close the job/process-group, which would hang
+/// `run()` forever.
+#[test]
+fn cancel_handle_with_process_tree_returns_promptly() {
+    let pid_file = std::env::temp_dir().join("aer_test_grandchild_pid_cancel.txt");
+    let pid_file_str = pid_file.to_str().unwrap();
+
+    let (prog, args) = orphan_cmd(pid_file_str);
+    let task = Task::new(prog, args);
+    let cancel = CancelHandle::new();
+    let mut events = Vec::new();
+    let start = std::time::Instant::now();
+    let result = task.run_with_cancel(|e| events.push(e), &cancel);
+    let elapsed = start.elapsed();
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "run_with_cancel() took {elapsed:?} — the CancelHandle's KillHandle clone is \
+         blocking cleanup (circular wait)"
+    );
+    assert_eq!(events.len(), 2);
+    assert!(
+        matches!(
+            events[1],
+            Event::Exited {
+                code: 0,
+                reason: ExitReason::NaturalExit
+            }
+        ),
+        "expected Exited {{ code: 0, reason: NaturalExit }}, got {:?}",
+        events[1]
+    );
+
+    let _ = fs::remove_file(&pid_file);
+}
+
 // --- M4: FFI Boundary ---
 
 // Closures cannot be extern "C". State is passed through user_data instead.

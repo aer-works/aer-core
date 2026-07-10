@@ -1,9 +1,10 @@
 use crate::{
     event::{Event, ExitReason},
     machine::{State, StateMachine},
-    os::{KillHandle, OsProcess, OutputSinks, PlatformProcess},
+    os::{ChunkMsg, KillHandle, OsProcess, OutputSinks, PlatformProcess},
     AerError,
 };
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -158,29 +159,54 @@ impl Task {
             });
         }
 
-        let (sinks, stdout_rx, stderr_rx) = if self.capture_output {
-            let (stdout_tx, stdout_rx) = mpsc::channel::<(u64, Vec<u8>)>();
-            let (stderr_tx, stderr_rx) = mpsc::channel::<(u64, Vec<u8>)>();
-            (
-                OutputSinks {
-                    stdout: Some(stdout_tx),
-                    stderr: Some(stderr_tx),
-                },
-                Some(stdout_rx),
-                Some(stderr_rx),
-            )
-        } else {
-            (
-                OutputSinks {
-                    stdout: None,
-                    stderr: None,
-                },
-                None,
-                None,
-            )
-        };
+        // Capture-enabled path: wait() runs on a spawned thread so this (caller)
+        // thread is free to pump the chunk channel and invoke on_event as bytes
+        // arrive, instead of blocking until the process exits. The event callback
+        // itself never leaves the caller thread — only PlatformProcess::wait runs
+        // elsewhere.
+        let os_code: i32 = if self.capture_output {
+            let (chunk_tx, chunk_rx) = mpsc::channel::<ChunkMsg>();
+            let sinks = OutputSinks {
+                stdout: Some(chunk_tx.clone()),
+                stderr: Some(chunk_tx.clone()),
+            };
+            // Drop our clone so the channel closes once both drain threads (inside
+            // wait()) finish and drop their clones — that's the recv() loop's exit
+            // signal below.
+            drop(chunk_tx);
 
-        let os_code = PlatformProcess::wait(handle, sinks)?;
+            let (wait_tx, wait_rx) = mpsc::channel::<Result<i32, AerError>>();
+            let wait_thread = thread::spawn(move || {
+                let result = PlatformProcess::wait(handle, sinks);
+                let _ = wait_tx.send(result);
+            });
+
+            // Live delivery: emit each chunk as it arrives. Ends when every sender
+            // has dropped, i.e. once wait()'s drain threads have finished (which
+            // happens after wait() terminates the process tree and its pipes close).
+            while let Ok(msg) = chunk_rx.recv() {
+                match msg {
+                    ChunkMsg::Stdout(seq, bytes) => on_event(Event::StdoutChunk { seq, bytes }),
+                    ChunkMsg::Stderr(seq, bytes) => on_event(Event::StderrChunk { seq, bytes }),
+                }
+            }
+
+            // The chunk channel closing means the drain threads are done, so wait()
+            // is at most moments from returning; this recv() blocks until it does.
+            let result: Result<i32, AerError> = wait_rx.recv().map_err(|_| {
+                AerError::WaitFailed(io::Error::other(
+                    "wait thread ended without sending a result",
+                ))
+            })?;
+            let _ = wait_thread.join();
+            result?
+        } else {
+            let sinks = OutputSinks {
+                stdout: None,
+                stderr: None,
+            };
+            PlatformProcess::wait(handle, sinks)?
+        };
 
         // Disconnect the kill handle: process is dead, cancel() is now a no-op.
         if let Some(ch) = cancel {
@@ -209,18 +235,8 @@ impl Task {
             os_code
         };
 
-        // Drain captured output: emitted between Started and Exited.
-        if let Some(rx) = stdout_rx {
-            for (seq, bytes) in rx {
-                on_event(Event::StdoutChunk { seq, bytes });
-            }
-        }
-        if let Some(rx) = stderr_rx {
-            for (seq, bytes) in rx {
-                on_event(Event::StderrChunk { seq, bytes });
-            }
-        }
-
+        // Captured chunks (if any) were already delivered live, above, strictly
+        // between Started and this Exited transition.
         machine.transition(State::Exited)?;
         on_event(Event::Exited { code, reason });
 

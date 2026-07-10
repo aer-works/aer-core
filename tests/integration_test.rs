@@ -5,7 +5,7 @@ use aer_core::{
 use std::ffi::{c_void, CStr, CString};
 use std::fs;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Returns a shell invocation that exits with the given code, cross-platform.
 fn exit_cmd(code: i32) -> (String, Vec<String>) {
@@ -74,6 +74,23 @@ fn sleep_cmd(secs: u64) -> (String, Vec<String>) {
     #[cfg(not(target_os = "windows"))]
     {
         ("sh".into(), vec!["-c".into(), format!("sleep {}", secs)])
+    }
+}
+
+/// Returns a shell invocation that prints a line, flushes it, sleeps ~3s, then
+/// exits 0. Used to verify that captured chunks are delivered while the
+/// process is still alive rather than buffered until exit (#72).
+fn live_output_cmd() -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "cmd".into(),
+            vec!["/c".into(), "echo hello & ping -n 4 127.0.0.1 >nul".into()],
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("sh".into(), vec!["-c".into(), "echo hello; sleep 3".into()])
     }
 }
 
@@ -675,6 +692,65 @@ fn capture_output_collects_stderr_chunks() {
         "expected 'hello_stderr' in stderr chunks, got: {:?}",
         text
     );
+}
+
+/// Regression test for #72: captured chunks must be delivered to the event
+/// callback while the process is still alive, not buffered until it exits.
+/// Before the fix, `run_impl` drained the chunk channels only after
+/// `PlatformProcess::wait()` returned, so a slow process produced silence
+/// followed by a burst of chunks right before `Exited`.
+#[test]
+fn capture_delivers_chunks_while_process_is_alive() {
+    let (prog, args) = live_output_cmd();
+    let task = Task::new(prog, args).with_capture_output(true);
+
+    let start = Instant::now();
+    let mut timestamps: Vec<(Instant, Event)> = Vec::new();
+    let result = task.run(|e| timestamps.push((Instant::now(), e)));
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+
+    let exited_at = timestamps
+        .iter()
+        .find(|(_, e)| matches!(e, Event::Exited { .. }))
+        .map(|(t, _)| *t)
+        .expect("expected an Exited event");
+
+    let stdout_chunk_times: Vec<Instant> = timestamps
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::StdoutChunk { .. }))
+        .map(|(t, _)| *t)
+        .collect();
+    assert!(
+        !stdout_chunk_times.is_empty(),
+        "expected at least one StdoutChunk"
+    );
+
+    // Sanity: the run must actually have taken ~3s (the sleep), otherwise a
+    // large first-chunk-to-Exited gap wouldn't prove anything about liveness.
+    let total = exited_at.duration_since(start);
+    assert!(
+        total >= Duration::from_millis(2500),
+        "process exited too quickly ({total:?}) for this test to be meaningful"
+    );
+
+    // The first stdout chunk must have arrived well before Exited — proving
+    // it was delivered while the process was still sleeping, not flushed in
+    // a burst after wait() returned.
+    let first_chunk_at = stdout_chunk_times[0];
+    let gap = exited_at.duration_since(first_chunk_at);
+    assert!(
+        gap >= Duration::from_millis(1500),
+        "first stdout chunk arrived only {gap:?} before Exited — chunks are not \
+         being delivered live"
+    );
+
+    // All chunks (either stream) must precede Exited.
+    for (t, e) in &timestamps {
+        if matches!(e, Event::StdoutChunk { .. } | Event::StderrChunk { .. }) {
+            assert!(*t <= exited_at, "chunk timestamped after Exited: {:?}", e);
+        }
+    }
 }
 
 // --- M4b: Observation Tier (FFI) ---

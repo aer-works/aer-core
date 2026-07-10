@@ -61,7 +61,7 @@ impl OsProcess for WindowsProcess {
             return Err(AerError::SpawnFailed(io::Error::last_os_error()));
         }
 
-        let child = Command::new(program)
+        let mut child = Command::new(program)
             .args(args)
             // Pipes are required even though output is not surfaced to callers.
             // Without draining, a child writing beyond the OS pipe buffer deadlocks
@@ -74,7 +74,15 @@ impl OsProcess for WindowsProcess {
         // Assign the child to the job. child.as_raw_handle() returns the process
         // HANDLE (*mut c_void), which AssignProcessToJobObject accepts directly.
         if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) } == 0 {
-            return Err(AerError::SpawnFailed(io::Error::last_os_error()));
+            let err = io::Error::last_os_error();
+            // The child is already alive at this point (spawn succeeded) but never
+            // made it into the job, so JobHandle's Drop/KILL_ON_JOB_CLOSE won't
+            // reach it. The "no orphans" guarantee applies to spawn failures too,
+            // not just to teardown after a successful spawn — kill it here before
+            // returning the error so we don't leak a live, untracked process.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AerError::SpawnFailed(err));
         }
 
         let pid = child.id();

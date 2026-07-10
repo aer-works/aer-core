@@ -6,7 +6,7 @@ use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) struct UnixProcess;
 
@@ -126,7 +126,24 @@ impl OsProcess for UnixProcess {
                 return Err(AerError::KillFailed(e));
             }
         }
-        thread::sleep(grace);
+        // Poll for group death during the grace window instead of sleeping it out
+        // unconditionally (#76): a child that exits promptly on SIGTERM must not
+        // cost the caller (timeout monitor, cancel thread, ~6 tests) the full
+        // grace period. tree_alive is the same probe the cancel/timeout paths
+        // use; the concurrent wait() reaps the dead root promptly, so the probe
+        // converges to "dead" as soon as the tree is gone — at which point there
+        // is nothing left to SIGKILL and we are done.
+        let deadline = Instant::now() + grace;
+        loop {
+            if !Self::tree_alive(&kill) {
+                return Ok(());
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25).min(deadline - now));
+        }
         // SIGKILL: cannot be caught or ignored. ESRCH here usually means the group
         // is already gone (responded to SIGTERM) — not an error — but it can also
         // be the pre-setsid window again, so send the direct-pid fallback too.

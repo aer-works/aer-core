@@ -259,12 +259,22 @@ fn large_output_does_not_deadlock() {
 #[test]
 fn timeout_kills_slow_process() {
     let (prog, args) = sleep_cmd(60);
+    let start = Instant::now();
     let (result, events) = collect_events_with_timeout(&prog, args, Duration::from_secs(1));
+    let elapsed = start.elapsed();
 
     assert!(
         matches!(result, Err(AerError::TimedOut)),
         "expected TimedOut, got {:?}",
         result
+    );
+    // Regression guard for #76: a SIGTERM-responsive child must not cost the
+    // full 5s kill grace on Unix — the grace window is polled, not slept out.
+    // (Windows kills immediately, so this bound holds there trivially.)
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "run() took {elapsed:?} for a 1s timeout — the kill grace window is \
+         being slept out unconditionally instead of polled"
     );
     assert_eq!(events.len(), 2, "expected Started + Exited even on timeout");
     assert!(matches!(events[0], Event::Started { pid } if pid > 0));

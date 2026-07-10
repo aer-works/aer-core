@@ -31,7 +31,14 @@ jobs:
         run: pixi run lint
 
       - name: Test
-        run: pixi run test
+        # libtest's --report-time requires nightly (-Z unstable-options), so it
+        # can't be used here. `time` wraps the whole suite instead: silent
+        # per-test slowness (e.g. the old 5s-per-kill-test from #76) now shows
+        # up as suite wall time in the CI log. `shell: bash` runs this step
+        # through Git Bash on windows-latest too, so `time` is available on
+        # both matrix OSes without a platform branch.
+        shell: bash
+        run: time pixi run test
 
       - name: .NET check formatting
         run: pixi run dotnet-fmt-check

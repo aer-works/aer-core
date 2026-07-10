@@ -36,7 +36,7 @@ public class EnvironmentAndWorkingDirectoryTests
 
     private static List<byte[]> RunAndCaptureStdout(AerTaskHandle task)
     {
-        AerErrorCode captureCode = NativeMethods.aer_task_with_capture_output(task.DangerousGetHandle(), true);
+        AerErrorCode captureCode = NativeMethods.aer_task_with_capture_output(task, true);
         Assert.Equal(AerErrorCode.Ok, captureCode);
 
         List<byte[]> chunks = [];
@@ -47,7 +47,7 @@ public class EnvironmentAndWorkingDirectoryTests
                 chunks.Add(data);
             }
         });
-        AerErrorCode runCode = NativeMethods.aer_task_run(task.DangerousGetHandle(), bridge.NativeCallback, nint.Zero);
+        AerErrorCode runCode = NativeMethods.aer_task_run(task, bridge.NativeCallback, nint.Zero);
         Assert.Equal(AerErrorCode.Ok, runCode);
 
         return chunks;
@@ -152,7 +152,7 @@ public class EnvironmentAndWorkingDirectoryTests
         Assert.Equal(AerErrorCode.Ok, cwdCode);
 
         using CallbackBridge bridge = new((evt, _) => events.Add(evt));
-        AerErrorCode runCode = NativeMethods.aer_task_run(task.DangerousGetHandle(), bridge.NativeCallback, nint.Zero);
+        AerErrorCode runCode = NativeMethods.aer_task_run(task, bridge.NativeCallback, nint.Zero);
 
         Assert.Equal(AerErrorCode.SpawnFailed, runCode);
         Assert.Empty(events);

@@ -21,7 +21,7 @@ public class SafeHandleTests
         using AerTaskHandle task = NativeMethods.aer_task_new(program, nint.Zero, 0);
         Assert.False(task.IsInvalid);
 
-        using AerCancelHandle cancel = NativeMethods.aer_task_make_cancel_handle(task.DangerousGetHandle());
+        using AerCancelHandle cancel = NativeMethods.aer_task_make_cancel_handle(task);
         Assert.False(cancel.IsInvalid);
         // Both handles disposed via 'using' — proves aer_cancel_free and aer_task_free run without crash
     }

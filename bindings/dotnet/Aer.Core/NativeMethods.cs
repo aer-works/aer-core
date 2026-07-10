@@ -4,7 +4,7 @@ namespace Aer.Core;
 
 /// <summary>
 /// Raw P/Invoke declarations matching the stable C ABI in <c>aer.h</c>.
-/// All signatures are unsafe-free; higher-level wrappers will live in <c>AerTask</c> (Issue #62).
+/// All signatures are unsafe-free; the idiomatic managed surface lives in <see cref="AerTask"/>.
 /// </summary>
 internal static partial class NativeMethods
 {
@@ -21,14 +21,22 @@ internal static partial class NativeMethods
         nint args,
         nuint argsLen);
 
-    /// <summary>Set a wall-clock timeout in milliseconds. Must be called before <see cref="aer_task_run"/>.</summary>
+    /// <summary>
+    /// Set a wall-clock timeout in milliseconds. Must be called before <see cref="aer_task_run"/>.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="task"/> is typed as the <see cref="AerTaskHandle"/> SafeHandle itself (not
+    /// <c>nint</c>) so the CLR add-refs it for the duration of this call — see the discussion on issue #62
+    /// for why a raw handle + <c>DangerousGetHandle</c> is unsafe here (finalizer could free the task
+    /// mid-call).
+    /// </remarks>
     [LibraryImport(Lib)]
-    public static partial AerErrorCode aer_task_with_timeout(nint task, ulong timeoutMs);
+    public static partial AerErrorCode aer_task_with_timeout(AerTaskHandle task, ulong timeoutMs);
 
     /// <summary>Enable stdout/stderr capture. Must be called before <see cref="aer_task_run"/>.</summary>
     [LibraryImport(Lib)]
     public static partial AerErrorCode aer_task_with_capture_output(
-        nint task,
+        AerTaskHandle task,
         [MarshalAs(UnmanagedType.U1)] bool capture);
 
     /// <summary>
@@ -74,8 +82,13 @@ internal static partial class NativeMethods
     /// Create a cancellation handle. Must be called before <see cref="aer_task_run"/>.
     /// Returns an invalid handle on failure. Freed automatically via <see cref="AerCancelHandle.ReleaseHandle"/>.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="task"/> is typed as the <see cref="AerTaskHandle"/> SafeHandle itself so the CLR
+    /// add-refs it for the duration of this call rather than relying on a raw <c>nint</c> plus
+    /// <c>DangerousGetHandle</c> (see issue #62).
+    /// </remarks>
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern AerCancelHandle aer_task_make_cancel_handle(nint task);
+    public static extern AerCancelHandle aer_task_make_cancel_handle(AerTaskHandle task);
 
     // DllImport: LibraryImport does not support delegate marshaling.
     // Callers should wrap this via CallbackBridge, which GC-pins the delegate and marshals the event.
@@ -83,21 +96,40 @@ internal static partial class NativeMethods
     /// Spawn the process and block until it exits. <paramref name="callback"/> may be <see langword="null"/>.
     /// A handle may only be run once; a second call returns <see cref="AerErrorCode.AlreadyRun"/>.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="task"/> is typed as the <see cref="AerTaskHandle"/> SafeHandle itself so the CLR
+    /// add-refs it for the duration of this (potentially long-running, blocking) call — a raw <c>nint</c>
+    /// plus <c>DangerousGetHandle</c> would let the finalizer free the task mid-run (see issue #62).
+    /// </remarks>
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     public static extern AerErrorCode aer_task_run(
-        nint task,
+        AerTaskHandle task,
         AerEventCallback? callback,
         nint userData);
 
     /// <summary>Free a task handle. Safe to call with <see cref="nint.Zero"/>.</summary>
+    /// <remarks>
+    /// Kept as a raw <c>nint</c> parameter: this is invoked only from
+    /// <see cref="AerTaskHandle.ReleaseHandle"/>, which by definition already owns the last reference to
+    /// the handle value and must not go through the SafeHandle itself.
+    /// </remarks>
     [LibraryImport(Lib)]
     public static partial void aer_task_free(nint task);
 
     /// <summary>Cancel a running task. Safe to call from any thread at any time.</summary>
+    /// <remarks>
+    /// <paramref name="cancel"/> is typed as the <see cref="AerCancelHandle"/> SafeHandle itself so the
+    /// CLR add-refs it for the duration of this call (see issue #62).
+    /// </remarks>
     [LibraryImport(Lib)]
-    public static partial AerErrorCode aer_cancel(nint cancel);
+    public static partial AerErrorCode aer_cancel(AerCancelHandle cancel);
 
     /// <summary>Free a cancel handle. Safe to call with <see cref="nint.Zero"/>.</summary>
+    /// <remarks>
+    /// Kept as a raw <c>nint</c> parameter: this is invoked only from
+    /// <see cref="AerCancelHandle.ReleaseHandle"/>, which by definition already owns the last reference to
+    /// the handle value and must not go through the SafeHandle itself.
+    /// </remarks>
     [LibraryImport(Lib)]
     public static partial void aer_cancel_free(nint cancel);
 

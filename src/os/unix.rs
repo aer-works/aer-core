@@ -176,4 +176,15 @@ impl OsProcess for UnixProcess {
         }
         io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     }
+
+    fn reap_abandoned(kill: &KillHandle) {
+        // The abandoned root (pgid value == root pid) was just SIGKILLed but its
+        // `Child` gets dropped without wait() on the unwind path, which would
+        // leave a zombie in the caller's process — one that still answers
+        // kill(pid, 0), so "is it alive" probes never see it die. A blocking
+        // waitpid is safe here: SIGKILL cannot be blocked, so exit is imminent.
+        // ECHILD (already reaped — e.g. the detached capture-path wait thread
+        // got there first, or the pid is not our child) is ignored.
+        let _ = unsafe { libc::waitpid(kill.pgid as i32, std::ptr::null_mut(), 0) };
+    }
 }

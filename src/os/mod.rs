@@ -60,6 +60,13 @@ pub(crate) trait OsProcess {
     /// On query failure, implementations fail toward "alive" (killing an
     /// already-dead tree is harmless; skipping a kill on a live one is not).
     fn tree_alive(kill: &KillHandle) -> bool;
+    /// Reaps the root process of an abandoned run (panic/early-error path,
+    /// where `wait()` was never reached and the `Child` is dropped without
+    /// being waited on). Without this, the killed root lingers as a zombie in
+    /// the caller's process on Unix — still answering `kill(pid, 0)` probes.
+    /// Windows has no zombie concept; that implementation is a no-op.
+    /// Must only be called after the tree has been killed.
+    fn reap_abandoned(kill: &KillHandle);
 }
 
 #[cfg(not(target_os = "windows"))]

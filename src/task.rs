@@ -42,6 +42,10 @@ impl Drop for KillOnDropGuard {
             // Errors are ignored: Drop must not panic, and there's no one left
             // to report a kill failure to.
             let _ = PlatformProcess::kill_escalating(self.kill.clone(), Duration::ZERO);
+            // On this path the Child is dropped without wait(), so reap the
+            // killed root explicitly — otherwise it lingers as a zombie in the
+            // caller's process on Unix (no-op on Windows).
+            PlatformProcess::reap_abandoned(&self.kill);
         }
     }
 }

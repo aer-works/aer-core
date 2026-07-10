@@ -246,7 +246,9 @@ impl Task {
         // in that case the flag is set but kill_fired is false; do the kill now
         // (unless the process already raced to natural exit — same probe as cancel()).
         if let Some(ch) = cancel {
-            *ch.kill.lock().unwrap() = Some(handle.kill.clone());
+            // The guarded data is a plain Option<KillHandle>, always left in a
+            // consistent state, so recovering from a poisoned lock is safe.
+            *ch.kill.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle.kill.clone());
             if ch.cancelled.load(Ordering::SeqCst)
                 && !ch.kill_fired.load(Ordering::SeqCst)
                 && PlatformProcess::tree_alive(&handle.kill)
@@ -336,7 +338,8 @@ impl Task {
 
         // Disconnect the kill handle: process is dead, cancel() is now a no-op.
         if let Some(ch) = cancel {
-            *ch.kill.lock().unwrap() = None;
+            // Same poisoning rationale as the wiring lock() above.
+            *ch.kill.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
 
         let _ = cancel_tx.send(());

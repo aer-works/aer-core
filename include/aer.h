@@ -1,6 +1,7 @@
 #ifndef AER_H
 #define AER_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -105,7 +106,10 @@ typedef void (*AerEventCallback)(const AerEvent *event, void *user_data);
  *
  * `program`  — null-terminated, valid UTF-8, no embedded NUL bytes.
  * `args`     — array of `args_len` null-terminated strings; may be NULL when args_len == 0.
- * Returns NULL on any invalid input (NULL program, non-UTF-8 string, NULL element).
+ * `args_len` — must not exceed 65536; larger values return NULL without
+ *              allocating.
+ * Returns NULL on any invalid input (NULL program, non-UTF-8 string, NULL
+ * element, or args_len exceeding the 65536 cap).
  * The returned handle must be freed with aer_task_free.
  */
 AerTask *aer_task_new(const char *program,

@@ -65,6 +65,12 @@ pub enum AerErrorCode {
     InvalidArgument = 10,
 }
 
+/// Upper bound on `args_len` accepted by `aer_task_new`. No real invocation
+/// needs anywhere near this many arguments; rejecting absurd values here
+/// avoids handing an attacker-controlled `args_len` straight to
+/// `Vec::with_capacity` before any pointer has been validated.
+const MAX_ARGS_LEN: usize = 65_536;
+
 /// C-compatible event delivered to AerEventCallback.
 ///
 /// `kind` selects which fields are valid:
@@ -118,6 +124,8 @@ pub struct AerCancelHandle(CancelHandle);
 ///
 /// `args` may be NULL when `args_len` is 0.
 /// All strings must be valid UTF-8 with no embedded NUL bytes.
+/// `args_len` must not exceed `MAX_ARGS_LEN` (65_536); larger values return
+/// NULL without allocating.
 /// The returned pointer must be freed with aer_task_free.
 ///
 /// # Safety
@@ -138,20 +146,26 @@ pub unsafe extern "C" fn aer_task_new(
             Err(_) => return std::ptr::null_mut(),
         };
 
+        // Validate args_len and the args pointer before allocating anything
+        // sized by it — an absurd caller-supplied args_len must not reach
+        // Vec::with_capacity, which would abort the process on allocation
+        // failure instead of returning the NULL this function documents.
+        if args_len > MAX_ARGS_LEN {
+            return std::ptr::null_mut();
+        }
+        if args_len > 0 && args.is_null() {
+            return std::ptr::null_mut();
+        }
+
         let mut arg_strings: Vec<String> = Vec::with_capacity(args_len);
-        if args_len > 0 {
-            if args.is_null() {
+        for i in 0..args_len {
+            let arg_ptr = unsafe { *args.add(i) };
+            if arg_ptr.is_null() {
                 return std::ptr::null_mut();
             }
-            for i in 0..args_len {
-                let arg_ptr = unsafe { *args.add(i) };
-                if arg_ptr.is_null() {
-                    return std::ptr::null_mut();
-                }
-                match unsafe { CStr::from_ptr(arg_ptr) }.to_str() {
-                    Ok(s) => arg_strings.push(s.to_owned()),
-                    Err(_) => return std::ptr::null_mut(),
-                }
+            match unsafe { CStr::from_ptr(arg_ptr) }.to_str() {
+                Ok(s) => arg_strings.push(s.to_owned()),
+                Err(_) => return std::ptr::null_mut(),
             }
         }
 

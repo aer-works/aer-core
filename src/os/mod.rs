@@ -1,7 +1,9 @@
 use crate::AerError;
+use std::io::{self, Read};
 use std::path::Path;
 use std::process::Child;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Sender};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Lightweight handle that the timeout monitor thread uses to kill the process tree.
@@ -85,6 +87,40 @@ pub(crate) trait OsProcess {
     /// Windows has no zombie concept; that implementation is a no-op.
     /// Must only be called after the tree has been killed.
     fn reap_abandoned(kill: &KillHandle);
+}
+
+/// Spawns a thread that drains `reader` in 8192-byte chunks until EOF or error.
+///
+/// When `tx` is `Some`, each successful read is wrapped via `make_msg` (with a
+/// per-thread, monotonically increasing `seq` starting at 0) and sent; a send
+/// failure (receiver dropped) is treated the same as any other loop exit — the
+/// thread stops draining. When `tx` is `None`, bytes are silently discarded via
+/// `io::copy` into `io::sink()` (still required so the child cannot deadlock on
+/// a full pipe buffer). Shared by both platform backends so stdout/stderr
+/// draining behavior — buffer size, EOF/error handling, seq numbering — stays
+/// identical in one place instead of four.
+pub(crate) fn spawn_drain_thread(
+    mut reader: impl Read + Send + 'static,
+    tx: Option<Sender<ChunkMsg>>,
+    make_msg: fn(u64, Vec<u8>) -> ChunkMsg,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        if let Some(tx) = tx {
+            let mut seq = 0u64;
+            let mut buf = vec![0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = tx.send(make_msg(seq, buf[..n].to_vec()));
+                        seq += 1;
+                    }
+                }
+            }
+        } else {
+            let _ = io::copy(&mut reader, &mut io::sink());
+        }
+    })
 }
 
 #[cfg(not(target_os = "windows"))]

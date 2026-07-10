@@ -205,4 +205,11 @@ impl OsProcess for WindowsProcess {
         }
         info.ActiveProcesses > 0
     }
+
+    fn reap_abandoned(_kill: &KillHandle) {
+        // No-op: Windows has no zombie concept. Once TerminateJobObject has
+        // killed the tree, dropping the Child's process handle releases
+        // everything; liveness probes (GetExitCodeProcess) immediately see the
+        // real exit code rather than STILL_ACTIVE.
+    }
 }

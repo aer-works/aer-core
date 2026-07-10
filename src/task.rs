@@ -12,6 +12,44 @@ use std::time::Duration;
 
 const KILL_GRACE: Duration = Duration::from_secs(5);
 
+/// Drop-based scope guard that kills the process tree if `run_impl` unwinds or
+/// returns early before the process is known dead (e.g. the caller's event
+/// callback panics, or a `?` on a transition/wait error fires). Armed right
+/// after spawn and disarmed once `wait()` has successfully returned an exit
+/// code, at which point the process is confirmed dead and there is nothing
+/// left to clean up.
+struct KillOnDropGuard {
+    kill: KillHandle,
+    armed: bool,
+}
+
+impl KillOnDropGuard {
+    fn new(kill: KillHandle) -> Self {
+        Self { kill, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for KillOnDropGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            // Grace of zero is deliberate: on the panic/early-return path we are
+            // abandoning the run, so immediate SIGKILL-equivalent semantics are
+            // correct — there's no caller left to observe a graceful shutdown.
+            // Errors are ignored: Drop must not panic, and there's no one left
+            // to report a kill failure to.
+            let _ = PlatformProcess::kill_escalating(self.kill.clone(), Duration::ZERO);
+            // On this path the Child is dropped without wait(), so reap the
+            // killed root explicitly — otherwise it lingers as a zombie in the
+            // caller's process on Unix (no-op on Windows).
+            PlatformProcess::reap_abandoned(&self.kill);
+        }
+    }
+}
+
 /// A handle that allows an external caller to cancel a running task.
 ///
 /// Obtained before `run_with_cancel` is called. The handle can be cloned and
@@ -146,6 +184,13 @@ impl Task {
         let str_args: Vec<&str> = self.args.iter().map(String::as_str).collect();
         let handle = PlatformProcess::spawn(&self.program, &str_args)?;
 
+        // Armed immediately after spawn so any early return or panic below —
+        // including one raised by the caller's `on_event` callback — kills the
+        // process tree instead of leaking it. Disarmed only once `wait()` has
+        // successfully returned an exit code, in both the capture and
+        // no-capture paths below.
+        let mut kill_guard = KillOnDropGuard::new(handle.kill.clone());
+
         let pid = handle.pid;
         machine.transition(State::Running)?;
         on_event(Event::Started { pid });
@@ -235,6 +280,13 @@ impl Task {
             };
             PlatformProcess::wait(handle, sinks)?
         };
+
+        // The process is confirmed dead now that an exit code was obtained
+        // (both the capture and no-capture paths above route through the `?`
+        // that would have left this guard armed on failure). Disarm so a
+        // later panic in the caller's Exited callback doesn't fire a
+        // redundant kill against an already-reaped tree.
+        kill_guard.disarm();
 
         // Disconnect the kill handle: process is dead, cancel() is now a no-op.
         if let Some(ch) = cancel {

@@ -1080,3 +1080,45 @@ fn ffi_cancel_null_returns_null_pointer() {
 fn ffi_cancel_free_null_is_noop() {
     unsafe { ffi::aer_cancel_free(std::ptr::null_mut()) };
 }
+
+// --- #75: Panic Safety (Rust API) ---
+
+/// Regression test for #75: before the fix, a panic inside the caller's
+/// `on_event` callback unwound out of `run()` with the process tree still
+/// armed and no cleanup — Rust callers (not shielded by the FFI boundary's
+/// `catch_unwind`) leaked the child. `KillOnDropGuard` in task.rs must kill
+/// the tree from `Drop` when the guard is still armed at unwind time.
+#[test]
+fn panicking_callback_does_not_orphan_the_process() {
+    let (prog, args) = sleep_cmd(30);
+    let task = Task::new(prog, args);
+
+    let mut recorded_pid: u32 = 0;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        task.run(|e| {
+            if let Event::Started { pid } = e {
+                recorded_pid = pid;
+                panic!("simulated callback panic (#75 regression test)");
+            }
+        })
+    }));
+
+    assert!(
+        result.is_err(),
+        "expected the callback panic to propagate out of run()"
+    );
+    assert!(recorded_pid > 0, "pid was not recorded before the panic");
+
+    // The guard's kill is dispatched synchronously as part of unwinding
+    // (Drop runs on the way out of run_impl), but the OS tearing the process
+    // down is not instantaneous; poll briefly rather than asserting instantly.
+    let start = Instant::now();
+    while process_is_alive(recorded_pid) && start.elapsed() < Duration::from_secs(5) {
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !process_is_alive(recorded_pid),
+        "process {recorded_pid} is still alive after the callback panicked — \
+         the process tree was orphaned"
+    );
+}

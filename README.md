@@ -60,6 +60,45 @@ Done.
 
 ---
 
+## .NET usage
+
+The `Aer.Core` package (`bindings/dotnet/Aer.Core`) wraps the C FFI in an idiomatic managed API:
+fluent `With*` configuration, `Run`/`RunAsync`, and an `EventRaised` event instead of raw callbacks.
+
+```csharp
+using Aer.Core;
+
+using AerTask task = new AerTask("ping", "-n", "4", "127.0.0.1")
+    .WithTimeout(TimeSpan.FromSeconds(10))
+    .WithCaptureOutput();
+
+task.EventRaised += (_, e) =>
+{
+    if (e.Kind is AerTaskEventKind.StdoutChunk or AerTaskEventKind.StderrChunk)
+    {
+        Console.Write(Encoding.UTF8.GetString(e.Data!));
+    }
+};
+
+task.Run(); // blocks until the process exits
+```
+
+`RunAsync` runs the (inherently blocking) native call on a thread-pool thread and wires a
+`CancellationToken` to the native cancel handle:
+
+```csharp
+using CancellationTokenSource cts = new(TimeSpan.FromSeconds(5));
+using AerTask task = new AerTask("sh", "-c", "sleep 30");
+
+await task.RunAsync(cts.Token); // throws AerCancelException once the token fires
+```
+
+Failures are typed, not swallowed: `AerTimeoutException` and `AerCancelException` (both
+`AerException` subtypes carrying an `AerErrorCode`) signal timeout and cancellation respectively;
+every other native failure surfaces as a plain `AerException`.
+
+---
+
 ## Architecture
 
 ```
@@ -91,7 +130,7 @@ Dependencies flow inward only. No process logic lives in the bindings.
 | **M2: Timeout & Kill** | ✅ Complete | Configurable timeout, graceful termination, kill escalation |
 | **M3: Process Tree** | ✅ Complete | Job Objects (Windows), setsid (Unix) — no orphans (hard guarantee on Windows, best-effort on Unix; spec §6) |
 | **M4: FFI Boundary** | ✅ Complete | Stable C-compatible ABI for language bindings |
-| **M5: .NET Binding** | Planned | P/Invoke wrapper, `IAsyncEnumerable<Event>` |
+| **M5: .NET Binding** | ✅ Complete | P/Invoke wrapper, managed `AerTask` (fluent config, `Run`/`RunAsync`, `EventRaised`) |
 | **M6: Python Binding** | Deferred | ctypes/cffi wrapper, asyncio context manager |
 
 Full behavioral specification: [`spec/aer-core-behavioral-spec-v1.1.md`](spec/aer-core-behavioral-spec-v1.1.md)

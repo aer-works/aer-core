@@ -6,6 +6,8 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 
 [dependencies]
 rust = ">=1.80"
+cargo-llvm-cov = "*"
+llvm-tools = "*"
 
 [tasks]
 build     = "cargo build"
@@ -13,6 +15,7 @@ test      = "cargo test"
 lint      = "cargo clippy --all-targets -- -D warnings"
 fmt       = "cargo fmt --all"
 fmt-check = "cargo fmt --all -- --check"
+coverage  = "cargo llvm-cov --workspace --html --output-dir target/coverage && cargo llvm-cov report --summary-only"
 example         = "cargo run --example hello"
 example-timeout = "cargo run --example timeout"
 example-tree    = "cargo run --example tree"

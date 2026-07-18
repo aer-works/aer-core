@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.6.0...aer-core-v0.7.0) (2026-07-18)
+
+
+### Features
+
+* redirect spawned process stdin to null natively ([7762242](https://github.com/aer-works/aer-core/commit/7762242c959e6312eccdd91750a0dafb3a6c1a1e))
+
+
+### Documentation
+
+* **examples:** Add .NET usage example and env/cwd example ([#95](https://github.com/aer-works/aer-core/issues/95)) ([37c8272](https://github.com/aer-works/aer-core/commit/37c8272a1cebf5a3b3aedd38e864fecd4ac64a17))
+
+
+### Continuous Integration
+
+* Code coverage report task (cargo-llvm-cov) ([#98](https://github.com/aer-works/aer-core/issues/98)) ([bd87112](https://github.com/aer-works/aer-core/commit/bd8711236f78f1eb74a3dc0538064c32648e8cc9))
+
 ## [0.6.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.5.0...aer-core-v0.6.0) (2026-07-10)
 
 

@@ -70,6 +70,7 @@ impl OsProcess for WindowsProcess {
         let mut command = Command::new(program);
         command
             .args(args)
+            .stdin(Stdio::null())
             // Pipes are required even though output is not surfaced to callers.
             // Without draining, a child writing beyond the OS pipe buffer deadlocks
             // wait_with_output(). Never use Stdio::inherit here.

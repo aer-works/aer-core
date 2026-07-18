@@ -18,6 +18,7 @@ impl OsProcess for UnixProcess {
     ) -> Result<OsHandle, AerError> {
         let mut cmd = Command::new(program);
         cmd.args(args)
+            .stdin(Stdio::null())
             // Pipes are required even though output is not surfaced to callers.
             // Without draining, a child writing beyond the OS pipe buffer deadlocks
             // child.wait(). Never use Stdio::inherit here.
